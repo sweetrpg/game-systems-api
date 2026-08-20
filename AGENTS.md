@@ -37,9 +37,3 @@ go build -v ./...
 go vet ./...
 go test -v -coverprofile coverage.out ./...
 ```
-
-Regenerate Swagger docs after changing handler annotations:
-
-```bash
-go run github.com/swaggo/swag/cmd/swag@latest init -d cmd/gamesystems-api/,server/,models/ --parseDependency --parseInternal
-```

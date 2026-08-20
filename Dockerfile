@@ -1,24 +1,53 @@
-FROM swift:4.1 AS build
-LABEL maintainer="Paul Schifferer <paul@schifferers.net>"
+# This is a multi-stage Dockerfile and requires >= Docker 17.05
+# https://docs.docker.com/engine/userguide/eng-image/multistage-build/
+FROM golang:1.26.5 AS builder
 
-ARG GITHUBKEY
+ENV GOPROXY=http://proxy.golang.org
 
-RUN apt update && apt dist-upgrade -y
+RUN mkdir -p /src/gamesystems-api
+WORKDIR /src/gamesystems-api
 
-ADD . /build
-WORKDIR /build
-RUN mkdir $HOME/.ssh
-RUN ssh-keyscan -t rsa github.com 2>&1 > /root/.ssh/known_hosts
-RUN mv git_config $HOME/.ssh/config && \
-    echo "${GITHUBKEY}" > $HOME/.ssh/id_rsa && \
-    chmod 400 $HOME/.ssh/id_rsa
-RUN swift build
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download && go mod verify
 
-FROM swift:4.1 AS runtime
+ADD . .
+RUN CGO_ENABLED=0 GOOS=linux go build -v -o /bin/server cmd/gamesystems-api/main.go
 
-ADD Public /app/Public
-WORKDIR /app
-COPY --from=build /build/.build/x86_64-unknown-linux/debug/Run /app
+FROM alpine
 
-EXPOSE 8080
-CMD [ "/app/Run" ]
+ARG USERNAME=sweetrpg
+ARG BUILD_NUMBER=unset
+ARG BUILD_JOB=unset
+ARG BUILD_SHA=unset
+ARG BUILD_DATE=unset
+ARG BUILD_VERSION=unset
+
+RUN apk add --no-cache bash
+RUN apk add --no-cache ca-certificates
+
+RUN addgroup $USERNAME \
+    && adduser -D -G $USERNAME $USERNAME
+
+WORKDIR /app/
+
+RUN mkdir -p /app/bin /app/config
+COPY --from=builder /bin/server /app/bin/
+
+RUN echo "{\"number\":\"${BUILD_NUMBER}\",\"job\":\"${BUILD_JOB}\",\"sha\":\"${BUILD_SHA}\",\"date\":\"${BUILD_DATE}\",\"version\":\"${BUILD_VERSION}\"}" > /app/config/build-info.json
+RUN chown -R ${USERNAME}:${USERNAME} /app
+
+ENV GO_ENV=production
+ENV BIND_ADDRESS=0.0.0.0:8000
+ENV PORT="8000"
+ENV GIN_MODE="release"
+ENV VERSION=${BUILD_VERSION}
+
+EXPOSE 8000
+
+USER ${USERNAME}
+
+CMD [ "/app/bin/server" ]
