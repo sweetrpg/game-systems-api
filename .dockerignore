@@ -1,5 +1,7 @@
-README.md
-.gitignore
 .git/
-.build/
-*.xcodeproj/
+kubernetes/
+.editorconfig
+.gitignore
+README.md
+.github/
+.devcontainer/

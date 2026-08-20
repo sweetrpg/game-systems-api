@@ -1,4 +1,0 @@
-Host github.com
-    LogLevel DEBUG
-    IdentityFile ~/.ssh/id_rsa
-    User git

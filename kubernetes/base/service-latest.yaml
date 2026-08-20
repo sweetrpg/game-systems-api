@@ -1,0 +1,24 @@
+---
+kind: Service
+apiVersion: v1
+
+metadata:
+  name: api-v0
+
+spec:
+    # Alias for "latest" - the public Ingress's /api/0/gamesystems path and any in-cluster
+    # caller that wants latest-not-pinned should target this Service rather than api-v1
+    # directly. Its selector currently matches the same pods as api-v1 (the only version that
+    # exists yet); when a v2 ships, repoint this selector's `version` at v2 while api-v1 keeps
+    # selecting v1 pods unchanged, so callers pinned to /1 or api-v1 don't move underneath them.
+    selector:
+        app: api
+        version: v1
+        platform: sweetrpg
+        package: gamesystems
+        component: api
+    type: ClusterIP
+    ports:
+        - name: http
+          port: 8000
+          targetPort: http

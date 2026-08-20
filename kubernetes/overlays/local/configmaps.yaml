@@ -1,0 +1,15 @@
+---
+apiVersion: v1
+kind: ConfigMap
+
+metadata:
+  name: api-env
+
+data:
+  ENV: local
+  DB_SCHEME: mongodb
+  DB_HOST: mongodb.sweetrpg-gamesystems.svc.cluster.local:27017
+  DB_USER: gamesystems-api
+  DB_NAME: sweetrpg-gamesystems
+  DB_OPTS: ""
+  AUTH_API_URL: http://api-v1.sweetrpg-auth.svc.cluster.local:8000
