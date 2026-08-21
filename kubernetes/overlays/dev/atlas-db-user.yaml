@@ -1,0 +1,55 @@
+---
+# gamesystems-api's own database user, scoped to only its own database - the shared "sweetrpg"
+# user (readWriteAnyDatabase) is not for service use. Same pattern as catalog-api's own
+# kubernetes/overlays/dev/atlas-db-user.yaml.
+apiVersion: atlas.mongodb.com/v1
+kind: AtlasDatabaseUser
+
+metadata:
+  name: gamesystems-api
+
+spec:
+  databaseName: admin
+  username: gamesystems-api
+  passwordSecretRef:
+    name: gamesystems-api-db-credentials
+  projectRef:
+    name: sweetrpg
+    namespace: sweetrpg-db
+  roles:
+    - databaseName: sweetrpg-gamesystems
+      roleName: readWrite
+  x509Type: NONE
+
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+
+metadata:
+  name: gamesystems-api-db-credentials
+
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: akeyless
+    kind: ClusterSecretStore
+  target:
+    name: gamesystems-api-db-credentials
+    template:
+      metadata:
+        labels:
+          atlas.mongodb.com/type: credentials
+    creationPolicy: Owner
+  dataFrom:
+    # Same Akeyless value this overlay's own secrets/db.yaml reads (rewritten to DB_PW there) -
+    # one password, read by two ExternalSecrets, so the Operator-provisioned Atlas user and the
+    # app's own connection always agree on it. Akeyless stores it under the field name
+    # DB_PASSWORD; the Atlas Operator requires the Secret key to be literally "password", hence
+    # the rewrite here. Needs the Akeyless value at /sweetrpg/gamesystems/api/db provisioned
+    # before this reconciles - not something this repo can do itself.
+    - extract:
+        key: /sweetrpg/gamesystems/api/db
+      rewrite:
+        - regexp:
+            source: "DB_PASSWORD"
+            target: "password"

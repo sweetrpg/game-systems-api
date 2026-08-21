@@ -1,0 +1,79 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+    name: api-v1
+
+spec:
+    strategy:
+        rollingUpdate:
+            maxSurge: 1
+            maxUnavailable: 1
+        type: RollingUpdate
+    selector:
+        matchLabels:
+            app: api
+            version: v1
+            platform: sweetrpg
+            package: gamesystems
+            component: api
+    template:
+        metadata:
+            labels:
+                platform: sweetrpg
+                app: api
+                package: gamesystems
+                component: api
+                version: v1
+                release: prometheus
+            annotations:
+                reloader.stakater.com/auto: "true"
+                prometheus.io/scrape: "true"
+                prometheus.io/path: '/metrics'
+                prometheus.io/port: '8000'
+        spec:
+            serviceAccountName: api
+            enableServiceLinks: false
+            imagePullSecrets:
+                - name: sweetrpg-registry
+            containers:
+                - name: app
+                  image: gamesystems-api
+                  imagePullPolicy: Always
+                  envFrom:
+                      - configMapRef:
+                            name: api-common
+                      - configMapRef:
+                            name: api-env
+                      - secretRef:
+                            name: api-db
+                  env: []
+                  ports:
+                      - containerPort: 8000
+                        name: http
+                  resources:
+                      requests:
+                          cpu: "20m"
+                          memory: "55Mi"
+                      limits:
+                          cpu: "1"
+                          memory: "1Gi"
+                  livenessProbe:
+                        httpGet:
+                            path: /status/ping
+                            port: http
+                        initialDelaySeconds: 90
+                        timeoutSeconds: 10
+                        periodSeconds: 10
+                  readinessProbe:
+                        # Deliberately the shallow /status/ping, not /status/health - see
+                        # catalog-api's kubernetes/base/deployment.yaml for the full rationale
+                        # (a transient Atlas blip taking every replica NotReady at once).
+                        httpGet:
+                            path: /status/ping
+                            port: http
+                        initialDelaySeconds: 10
+                        timeoutSeconds: 10
+                        periodSeconds: 10
+            restartPolicy: Always

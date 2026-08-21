@@ -1,0 +1,7 @@
+.git/
+kubernetes/
+.editorconfig
+.gitignore
+README.md
+.github/
+.devcontainer/
