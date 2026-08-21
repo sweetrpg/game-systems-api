@@ -32,6 +32,8 @@ spec:
                 prometheus.io/scrape: "true"
                 prometheus.io/path: '/metrics'
                 prometheus.io/port: '8000'
+                openfeature.dev/enabled: "true"
+                openfeature.dev/featureflagsource: "sweetrpg-system/gamesystems-api"
         spec:
             serviceAccountName: api
             enableServiceLinks: false
