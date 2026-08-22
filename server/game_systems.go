@@ -11,6 +11,7 @@ import (
 	"github.com/sweetrpg/gamesystems-api/authz"
 	"github.com/sweetrpg/gamesystems-api/constants"
 	"github.com/sweetrpg/gamesystems-api/models"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type submittedVersionResponse struct {
@@ -76,15 +77,29 @@ func getGameSystem(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+type createGameSystemRequest struct {
+	models.GameSystemVersion `bson:",inline"`
+	SystemID                 string `json:"system_id" binding:"required"`
+}
+
 func createGameSystem(c *gin.Context) {
-	var entity models.GameSystemVersion
-	if err := c.ShouldBindJSON(&entity); err != nil {
+	var req createGameSystemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: err.Error()})
 		return
 	}
+	if !models.ValidateSystemID(req.SystemID) {
+		c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "system_id must be a lowercase kebab-case slug"})
+		return
+	}
+	entity := req.GameSystemVersion
 
-	id, err := models.Create(c.Request.Context(), &entity, authz.Subject(c))
+	id, err := models.Create(c.Request.Context(), &entity, req.SystemID, authz.Subject(c))
 	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "system_id already in use"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "create_failed", Message: err.Error()})
 		return
 	}
@@ -203,7 +218,16 @@ func versionParam(c *gin.Context) (int, bool) {
 }
 
 func listGameSystemVersions(c *gin.Context) {
-	versions, err := models.ListVersions(c.Request.Context(), c.Param("id"))
+	meta, err := models.GetMeta(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
+		return
+	}
+	if meta == nil {
+		c.JSON(http.StatusNotFound, apiv.ErrorVO{})
+		return
+	}
+	versions, err := models.ListVersions(c.Request.Context(), meta.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
 		return
@@ -216,7 +240,16 @@ func getGameSystemVersion(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := models.GetVersion(c.Request.Context(), c.Param("id"), version)
+	meta, err := models.GetMeta(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
+		return
+	}
+	if meta == nil {
+		c.JSON(http.StatusNotFound, apiv.ErrorVO{})
+		return
+	}
+	result, err := models.GetVersion(c.Request.Context(), meta.ID, version)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
 		return
