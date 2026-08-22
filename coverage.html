@@ -61,13 +61,15 @@
 				
 				<option value="file2">github.com/sweetrpg/gamesystems-api/cmd/gamesystems-api/main.go (0.0%)</option>
 				
-				<option value="file3">github.com/sweetrpg/gamesystems-api/models/versioning.go (6.8%)</option>
+				<option value="file3">github.com/sweetrpg/gamesystems-api/cmd/migrate-system-ids/main.go (12.8%)</option>
 				
-				<option value="file4">github.com/sweetrpg/gamesystems-api/server/game_systems.go (0.0%)</option>
+				<option value="file4">github.com/sweetrpg/gamesystems-api/models/versioning.go (7.5%)</option>
 				
-				<option value="file5">github.com/sweetrpg/gamesystems-api/server/handlers.go (0.0%)</option>
+				<option value="file5">github.com/sweetrpg/gamesystems-api/server/game_systems.go (15.5%)</option>
 				
-				<option value="file6">github.com/sweetrpg/gamesystems-api/server/status.go (0.0%)</option>
+				<option value="file6">github.com/sweetrpg/gamesystems-api/server/handlers.go (0.0%)</option>
+				
+				<option value="file7">github.com/sweetrpg/gamesystems-api/server/status.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -359,12 +361,131 @@ func main() <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file3" style="display: none">package models
+		<pre class="file" id="file3" style="display: none">package main
+
+import (
+        "context"
+        "fmt"
+        "log/slog"
+        "os"
+        "regexp"
+        "strings"
+
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/gamesystems-api/models"
+        "github.com/sweetrpg/mongodb.go/database"
+        "go.mongodb.org/mongo-driver/bson"
+)
+
+// One-off backfill: for every game system meta record missing system_id, slugify the name on
+// its current version record and set it as system_id. Collisions are resolved by appending
+// -2, -3, ... and each resolved collision is logged for manual review.
+//
+// Run AFTER deploying the service code but BEFORE the unique index is expected to hold:
+//
+//        go run ./cmd/migrate-system-ids
+const (
+        metaCollection    = "game_systems_meta"
+        versionCollection = "game_systems_versions"
+)
+
+// versionName is just the name field off a game system version record.
+type versionName struct {
+        Name string `bson:"name"`
+}
+
+func main() <span class="cov0" title="0">{
+        logging.Init()
+
+        c := context.Background()
+        database.SetupDatabase()
+        defer database.TeardownDatabase()
+
+        metas, err := database.Query[models.EntityMeta](metaCollection, bson.D{}, nil, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("failed to list meta records", "error", err.Error())
+                os.Exit(1)
+        }</span>
+
+        <span class="cov0" title="0">taken := map[string]bool{}
+        for _, meta := range metas </span><span class="cov0" title="0">{
+                if meta.SystemID != "" </span><span class="cov0" title="0">{
+                        taken[meta.SystemID] = true
+                }</span>
+        }
+
+        <span class="cov0" title="0">var updated int
+        for _, meta := range metas </span><span class="cov0" title="0">{
+                if meta.SystemID != "" </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+                <span class="cov0" title="0">version, err := getVersion(c, meta.ID, meta.CurrentVersion)
+                if err != nil || version == nil </span><span class="cov0" title="0">{
+                        logging.Logger.Error("skipping record: cannot load current version", "record", meta.ID, "error", fmt.Sprint(err))
+                        continue</span>
+                }
+                <span class="cov0" title="0">base := slugify(version.Name)
+                systemID := base
+                for n := 2; taken[systemID]; n++ </span><span class="cov0" title="0">{
+                        systemID = fmt.Sprintf("%s-%d", base, n)
+                        logging.Logger.Warn("system_id collision resolved with suffix; rename manually if needed",
+                                "record", meta.ID, "name", version.Name, "system_id", systemID)
+                }</span>
+
+                <span class="cov0" title="0">filter := bson.D{{Key: "_id", Value: meta.ID}, {Key: "$or", Value: bson.A{
+                        bson.D{{Key: "system_id", Value: ""}},
+                        bson.D{{Key: "system_id", Value: bson.M{"$exists": false}}},
+                }}}
+                res, err := database.Db.Collection(metaCollection).UpdateOne(c, filter,
+                        bson.D{{Key: "$set", Value: bson.D{{Key: "system_id", Value: systemID}}}})
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Logger.Error("failed to update record", "record", meta.ID, "error", err.Error())
+                        os.Exit(1)
+                }</span>
+                <span class="cov0" title="0">if res.MatchedCount == 1 </span><span class="cov0" title="0">{
+                        taken[systemID] = true
+                        updated++
+                }</span>
+        }
+
+        <span class="cov0" title="0">logging.Logger.Info("backfill complete", "updated", updated)</span>
+}
+
+func getVersion(c context.Context, recordID string, version int) (*versionName, error) <span class="cov0" title="0">{
+        filter := bson.D{{Key: "record_id", Value: recordID}, {Key: "version", Value: version}}
+        results, err := database.Query[versionName](versionCollection, filter, nil, nil, 0, 1)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
+                return nil, nil
+        }</span>
+        <span class="cov0" title="0">return results[0], nil</span>
+}
+
+var (
+        nonAlnum   = regexp.MustCompile(`[^a-z0-9]+`)
+        edgeDashes = regexp.MustCompile(`^-+|-+$`)
+)
+
+func slugify(s string) string <span class="cov10" title="4">{
+        lower := strings.ToLower(s)
+        slug := nonAlnum.ReplaceAllString(lower, "-")
+        slug = edgeDashes.ReplaceAllString(slug, "")
+        if slug == "" </span><span class="cov1" title="1">{
+                slog.Warn("slugify produced an empty slug", "input", s)
+        }</span>
+        <span class="cov10" title="4">return slug</span>
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">package models
 
 import (
         "context"
         "fmt"
         "reflect"
+        "regexp"
         "sort"
         "time"
 
@@ -379,12 +500,29 @@ import (
 const (
         metaCollection    = "game_systems_meta"
         versionCollection = "game_systems_versions"
+
+        // SystemIDPattern is the required format for a game system's system_id: lowercase
+        // kebab-case slug.
+        SystemIDPattern = `^[a-z0-9]+(-[a-z0-9]+)*$`
 )
+
+// ValidateSystemID reports whether s is a well-formed system_id slug.
+func ValidateSystemID(s string) bool <span class="cov7" title="10">{
+        matched, err := regexp.MatchString(SystemIDPattern, s)
+        return err == nil &amp;&amp; matched
+}</span>
 
 // EnsureIndexes creates the indexes game system version queries rely on. Safe to call on every
 // startup.
 func EnsureIndexes(c context.Context) error <span class="cov0" title="0">{
-        _, err := database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
+        _, err := database.Db.Collection(metaCollection).Indexes().CreateOne(c, mongo.IndexModel{
+                Keys:    bson.D{{Key: "system_id", Value: 1}},
+                Options: options.Index().SetUnique(true),
+        })
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("game system: create system_id index: %w", err)
+        }</span>
+        <span class="cov0" title="0">_, err = database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
                 Keys:    bson.D{{Key: "record_id", Value: 1}, {Key: "version", Value: 1}},
                 Options: options.Index().SetUnique(true),
         })
@@ -400,9 +538,14 @@ func EnsureIndexes(c context.Context) error <span class="cov0" title="0">{
         <span class="cov0" title="0">return nil</span>
 }
 
-// GetMeta fetches a game system's meta record.
+// GetMeta fetches a game system's meta record, matching id against either the document `_id`
+// or the `system_id` slug in a single query.
 func GetMeta(c context.Context, id string) (*EntityMeta, error) <span class="cov0" title="0">{
-        results, err := database.Query[EntityMeta](metaCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
+        filter := bson.D{{Key: "$or", Value: bson.A{
+                bson.D{{Key: "_id", Value: id}},
+                bson.D{{Key: "system_id", Value: id}},
+        }}}
+        results, err := database.Query[EntityMeta](metaCollection, filter, nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
@@ -426,7 +569,7 @@ func GetVersion(c context.Context, recordID string, version int) (*GameSystemVer
 }
 
 // Get returns a game system's meta merged with its current version's data - the flattened
-// current view GET /systems/:id returns.
+// current view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
 func Get(c context.Context, id string) (*GameSystemVersion, error) <span class="cov0" title="0">{
         meta, err := GetMeta(c, id)
         if err != nil </span><span class="cov0" title="0">{
@@ -435,7 +578,7 @@ func Get(c context.Context, id string) (*GameSystemVersion, error) <span class="
         <span class="cov0" title="0">if meta == nil </span><span class="cov0" title="0">{
                 return nil, nil
         }</span>
-        <span class="cov0" title="0">return GetVersion(c, id, meta.CurrentVersion)</span>
+        <span class="cov0" title="0">return GetVersion(c, meta.ID, meta.CurrentVersion)</span>
 }
 
 // List returns every live game system's current version - the flattened view GET /systems
@@ -485,11 +628,11 @@ func nextVersionNumber(c context.Context, recordID string) (int, error) <span cl
         <span class="cov0" title="0">return results[0].Version + 1, nil</span>
 }
 
-// Create adds a new game system: its meta record and first (live) version.
-func Create(c context.Context, gs *GameSystemVersion, createdBy string) (*string, error) <span class="cov0" title="0">{
+// Create adds a new game system: its meta record (with systemID) and first (live) version.
+func Create(c context.Context, gs *GameSystemVersion, systemID string, createdBy string) (*string, error) <span class="cov0" title="0">{
         now := time.Now()
         metaID := primitive.NewObjectID().Hex()
-        meta := EntityMeta{ID: metaID, CurrentVersion: 1, CreatedAt: now, CreatedBy: createdBy}
+        meta := EntityMeta{ID: metaID, SystemID: systemID, CurrentVersion: 1, CreatedAt: now, CreatedBy: createdBy}
         if _, err := database.Insert[EntityMeta](metaCollection, meta); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
@@ -802,7 +945,7 @@ func SetCurrentVersion(c context.Context, id string, version int) (*GameSystemVe
 }
 </pre>
 		
-		<pre class="file" id="file4" style="display: none">package server
+		<pre class="file" id="file5" style="display: none">package server
 
 import (
         "encoding/json"
@@ -815,6 +958,7 @@ import (
         "github.com/sweetrpg/gamesystems-api/authz"
         "github.com/sweetrpg/gamesystems-api/constants"
         "github.com/sweetrpg/gamesystems-api/models"
+        "go.mongodb.org/mongo-driver/mongo"
 )
 
 type submittedVersionResponse struct {
@@ -839,7 +983,7 @@ type rejectVersionRequest struct {
         Note string `json:"note"`
 }
 
-func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client) <span class="cov0" title="0">{
+func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client) <span class="cov10" title="4">{
         logging.Logger.Info("Setting up game system endpoint handlers...")
 
         g.GET("/systems", listGameSystems)
@@ -867,31 +1011,45 @@ func listGameSystems(c *gin.Context) <span class="cov0" title="0">{
         <span class="cov0" title="0">c.JSON(http.StatusOK, results)</span>
 }
 
-func getGameSystem(c *gin.Context) <span class="cov0" title="0">{
+func getGameSystem(c *gin.Context) <span class="cov8" title="3">{
         result, err := models.Get(c.Request.Context(), c.Param("id"))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov0" title="0">if result == nil </span><span class="cov0" title="0">{
+        <span class="cov8" title="3">if result == nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
-        <span class="cov0" title="0">c.JSON(http.StatusOK, result)</span>
+        <span class="cov5" title="2">c.JSON(http.StatusOK, result)</span>
 }
 
-func createGameSystem(c *gin.Context) <span class="cov0" title="0">{
-        var entity models.GameSystemVersion
-        if err := c.ShouldBindJSON(&amp;entity); err != nil </span><span class="cov0" title="0">{
+type createGameSystemRequest struct {
+        models.GameSystemVersion `bson:",inline"`
+        SystemID                 string `json:"system_id" binding:"required"`
+}
+
+func createGameSystem(c *gin.Context) <span class="cov5" title="2">{
+        var req createGameSystemRequest
+        if err := c.ShouldBindJSON(&amp;req); err != nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: err.Error()})
                 return
         }</span>
-
-        <span class="cov0" title="0">id, err := models.Create(c.Request.Context(), &amp;entity, authz.Subject(c))
-        if err != nil </span><span class="cov0" title="0">{
-                c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "create_failed", Message: err.Error()})
+        <span class="cov1" title="1">if !models.ValidateSystemID(req.SystemID) </span><span class="cov0" title="0">{
+                c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "system_id must be a lowercase kebab-case slug"})
                 return
         }</span>
+        <span class="cov1" title="1">entity := req.GameSystemVersion
+
+        id, err := models.Create(c.Request.Context(), &amp;entity, req.SystemID, authz.Subject(c))
+        if err != nil </span><span class="cov1" title="1">{
+                if mongo.IsDuplicateKeyError(err) </span><span class="cov1" title="1">{
+                        c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "system_id already in use"})
+                        return
+                }</span>
+                <span class="cov0" title="0">c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "create_failed", Message: err.Error()})
+                return</span>
+        }
         <span class="cov0" title="0">if id == nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "create_failed", Message: "no id returned"})
                 return
@@ -1007,7 +1165,16 @@ func versionParam(c *gin.Context) (int, bool) <span class="cov0" title="0">{
 }
 
 func listGameSystemVersions(c *gin.Context) <span class="cov0" title="0">{
-        versions, err := models.ListVersions(c.Request.Context(), c.Param("id"))
+        meta, err := models.GetMeta(c.Request.Context(), c.Param("id"))
+        if err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
+                return
+        }</span>
+        <span class="cov0" title="0">if meta == nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusNotFound, apiv.ErrorVO{})
+                return
+        }</span>
+        <span class="cov0" title="0">versions, err := models.ListVersions(c.Request.Context(), meta.ID)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
@@ -1020,7 +1187,16 @@ func getGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
         if !ok </span><span class="cov0" title="0">{
                 return
         }</span>
-        <span class="cov0" title="0">result, err := models.GetVersion(c.Request.Context(), c.Param("id"), version)
+        <span class="cov0" title="0">meta, err := models.GetMeta(c.Request.Context(), c.Param("id"))
+        if err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
+                return
+        }</span>
+        <span class="cov0" title="0">if meta == nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusNotFound, apiv.ErrorVO{})
+                return
+        }</span>
+        <span class="cov0" title="0">result, err := models.GetVersion(c.Request.Context(), meta.ID, version)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
@@ -1110,7 +1286,7 @@ func setCurrentGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file5" style="display: none">package server
+		<pre class="file" id="file6" style="display: none">package server
 
 import (
         "github.com/gin-gonic/gin"
@@ -1123,7 +1299,7 @@ func SetupHandlers(g *gin.Engine, authzClient *authz.Client) <span class="cov0" 
 }</span>
 </pre>
 		
-		<pre class="file" id="file6" style="display: none">package server
+		<pre class="file" id="file7" style="display: none">package server
 
 import (
         "net/http"
