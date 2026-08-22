@@ -18,6 +18,7 @@ type VersionLifecycle struct {
 // EntityMeta is the stable-identity record: id, the version currently live, and creation audit.
 type EntityMeta struct {
 	ID             string    `bson:"_id" json:"id"`
+	SystemID       string    `bson:"system_id" json:"system_id"`
 	CurrentVersion int       `bson:"current_version" json:"current_version"`
 	CreatedAt      time.Time `bson:"created_at" json:"created_at"`
 	CreatedBy      string    `bson:"created_by" json:"created_by"`
