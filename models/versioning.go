@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"time"
 
@@ -18,12 +19,29 @@ import (
 const (
 	metaCollection    = "game_systems_meta"
 	versionCollection = "game_systems_versions"
+
+	// SystemIDPattern is the required format for a game system's system_id: lowercase
+	// kebab-case slug.
+	SystemIDPattern = `^[a-z0-9]+(-[a-z0-9]+)*$`
 )
+
+// ValidateSystemID reports whether s is a well-formed system_id slug.
+func ValidateSystemID(s string) bool {
+	matched, err := regexp.MatchString(SystemIDPattern, s)
+	return err == nil && matched
+}
 
 // EnsureIndexes creates the indexes game system version queries rely on. Safe to call on every
 // startup.
 func EnsureIndexes(c context.Context) error {
-	_, err := database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
+	_, err := database.Db.Collection(metaCollection).Indexes().CreateOne(c, mongo.IndexModel{
+		Keys:    bson.D{{Key: "system_id", Value: 1}},
+		Options: options.Index().SetUnique(true),
+	})
+	if err != nil {
+		return fmt.Errorf("game system: create system_id index: %w", err)
+	}
+	_, err = database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
 		Keys:    bson.D{{Key: "record_id", Value: 1}, {Key: "version", Value: 1}},
 		Options: options.Index().SetUnique(true),
 	})
@@ -39,9 +57,14 @@ func EnsureIndexes(c context.Context) error {
 	return nil
 }
 
-// GetMeta fetches a game system's meta record.
+// GetMeta fetches a game system's meta record, matching id against either the document `_id`
+// or the `system_id` slug in a single query.
 func GetMeta(c context.Context, id string) (*EntityMeta, error) {
-	results, err := database.Query[EntityMeta](metaCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
+	filter := bson.D{{Key: "$or", Value: bson.A{
+		bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "system_id", Value: id}},
+	}}}
+	results, err := database.Query[EntityMeta](metaCollection, filter, nil, nil, 0, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +88,7 @@ func GetVersion(c context.Context, recordID string, version int) (*GameSystemVer
 }
 
 // Get returns a game system's meta merged with its current version's data - the flattened
-// current view GET /systems/:id returns.
+// current view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
 func Get(c context.Context, id string) (*GameSystemVersion, error) {
 	meta, err := GetMeta(c, id)
 	if err != nil {
@@ -74,7 +97,7 @@ func Get(c context.Context, id string) (*GameSystemVersion, error) {
 	if meta == nil {
 		return nil, nil
 	}
-	return GetVersion(c, id, meta.CurrentVersion)
+	return GetVersion(c, meta.ID, meta.CurrentVersion)
 }
 
 // List returns every live game system's current version - the flattened view GET /systems
@@ -124,11 +147,11 @@ func nextVersionNumber(c context.Context, recordID string) (int, error) {
 	return results[0].Version + 1, nil
 }
 
-// Create adds a new game system: its meta record and first (live) version.
-func Create(c context.Context, gs *GameSystemVersion, createdBy string) (*string, error) {
+// Create adds a new game system: its meta record (with systemID) and first (live) version.
+func Create(c context.Context, gs *GameSystemVersion, systemID string, createdBy string) (*string, error) {
 	now := time.Now()
 	metaID := primitive.NewObjectID().Hex()
-	meta := EntityMeta{ID: metaID, CurrentVersion: 1, CreatedAt: now, CreatedBy: createdBy}
+	meta := EntityMeta{ID: metaID, SystemID: systemID, CurrentVersion: 1, CreatedAt: now, CreatedBy: createdBy}
 	if _, err := database.Insert[EntityMeta](metaCollection, meta); err != nil {
 		return nil, err
 	}
