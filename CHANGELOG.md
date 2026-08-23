@@ -1,4 +1,16 @@
 
+## 0.2.0 - 2026-08-23
+
+### <!-- 0 -->🚀 Features
+- Add OpenFeature annotations to deployment
+- Add unique system_id slug to game system meta records
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.1.0
+
+
+
 ## 0.1.0 - 2026-08-20
 
 ### <!-- 0 -->🚀 Features
