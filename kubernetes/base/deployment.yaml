@@ -50,7 +50,11 @@ spec:
                             name: api-env
                       - secretRef:
                             name: api-db
-                  env: []
+                  env:
+                      - name: GOMEMLIMIT
+                        value: "900MiB"
+                      - name: GOGC
+                        value: "100"
                   ports:
                       - containerPort: 8000
                         name: http
