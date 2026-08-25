@@ -1,4 +1,12 @@
 
+## 0.2.1 - 2026-08-25
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.2.0
+- Set GOMEMLIMIT and GOGC on gamesystems-api deployment
+
+
+
 ## 0.2.0 - 2026-08-23
 
 ### <!-- 0 -->🚀 Features
