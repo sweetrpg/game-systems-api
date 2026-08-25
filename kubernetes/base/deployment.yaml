@@ -54,7 +54,7 @@ spec:
                       - name: GOMEMLIMIT
                         value: "900MiB"
                       - name: GOGC
-                        value: "100"
+                        value: "90"
                   ports:
                       - containerPort: 8000
                         name: http
