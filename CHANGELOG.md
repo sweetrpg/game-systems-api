@@ -1,4 +1,12 @@
 
+## 0.2.2 - 2026-08-25
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.2.1
+- Tighten GOGC to 90 on gamesystems-api deployment
+
+
+
 ## 0.2.1 - 2026-08-25
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
