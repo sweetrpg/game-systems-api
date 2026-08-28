@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sweetrpg/common.go/logging"
-	"github.com/sweetrpg/gamesystems-api/authz"
-	"github.com/sweetrpg/gamesystems-api/models"
+	"github.com/sweetrpg/game-systems-api/authz"
+	"github.com/sweetrpg/game-systems-api/models"
 	"github.com/sweetrpg/mongodb.go/database"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
 	"go.mongodb.org/mongo-driver/bson"
@@ -43,7 +43,7 @@ func setupTest(t *testing.T) *gin.Engine {
 	if err != nil {
 		t.Fatalf("connect mongo: %v", err)
 	}
-	database.Db = client.Database("gamesystems-test")
+	database.Db = client.Database("game-systems-test")
 	t.Cleanup(func() {
 		database.Db = nil
 		_ = client.Disconnect(context.Background())

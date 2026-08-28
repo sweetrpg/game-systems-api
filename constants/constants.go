@@ -1,7 +1,7 @@
 package constants
 
 // ServiceName identifies this service to auth-api's /authz/check and to tracing/telemetry.
-const ServiceName = "gamesystems-api"
+const ServiceName = "game-systems-api"
 
 // Environment variable names specific to this service.
 const (

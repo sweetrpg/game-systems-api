@@ -10,7 +10,7 @@ spec:
         app: api
         version: v1
         platform: sweetrpg
-        package: gamesystems
+        package: game-systems
         component: api
     type: ClusterIP
     ports:

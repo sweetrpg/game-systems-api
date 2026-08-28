@@ -1,4 +1,4 @@
-module github.com/sweetrpg/gamesystems-api
+module github.com/sweetrpg/game-systems-api
 
 go 1.26.5
 

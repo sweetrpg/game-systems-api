@@ -6,7 +6,7 @@ metadata:
   name: api-v1
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
-    traefik.ingress.kubernetes.io/router.middlewares: sweetrpg-gamesystems-strip-prefix-v1@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: sweetrpg-game-systems-strip-prefix-v1@kubernetescrd
     kubernetes.io/ingress.class: traefik
 
 spec:
@@ -16,14 +16,14 @@ spec:
       http:
         paths:
           - pathType: Prefix
-            path: /api/0/gamesystems
+            path: /api/0/game-systems
             backend:
               service:
                 name: api-v0
                 port:
                   name: http
           - pathType: Prefix
-            path: /api/1/gamesystems
+            path: /api/1/game-systems
             backend:
               service:
                 name: api-v1

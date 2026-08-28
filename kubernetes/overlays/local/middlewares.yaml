@@ -8,5 +8,5 @@ metadata:
 spec:
   stripPrefix:
     prefixes:
-      - /api/0/gamesystems
-      - /api/1/gamesystems
+      - /api/0/game-systems
+      - /api/1/game-systems

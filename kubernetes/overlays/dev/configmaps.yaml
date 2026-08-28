@@ -12,8 +12,8 @@ data:
   # SRV hostname for Cluster0 - not secret, but not derivable from anything else in this repo.
   DB_SCHEME: mongodb+srv
   DB_HOST: cluster0.z9nxg.mongodb.net
-  DB_USER: gamesystems-api
-  DB_NAME: sweetrpg-gamesystems
+  DB_USER: game-systems-api
+  DB_NAME: sweetrpg-game-systems
   DB_OPTS: retryWrites=true&w=majority
   OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo-distributor.observability.svc.cluster.local:4318/
   AUTH_API_URL: http://api-v1.sweetrpg-auth.svc.cluster.local:8000

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/sweetrpg/common.go/logging"
-	"github.com/sweetrpg/gamesystems-api/models"
+	"github.com/sweetrpg/game-systems-api/models"
 	"github.com/sweetrpg/mongodb.go/database"
 	"go.mongodb.org/mongo-driver/bson"
 )
