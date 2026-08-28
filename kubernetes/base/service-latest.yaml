@@ -12,11 +12,10 @@ spec:
     # exists yet); when a v2 ships, repoint this selector's `version` at v2 while api-v1 keeps
     # selecting v1 pods unchanged, so callers pinned to /1 or api-v1 don't move underneath them.
     selector:
-        app: api
-        version: v1
-        platform: sweetrpg
-        package: game-systems
-        component: api
+        app.kubernetes.io/name: game-systems-api
+        app.kubernetes.io/version: v1
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: game-systems
     type: ClusterIP
     ports:
         - name: http

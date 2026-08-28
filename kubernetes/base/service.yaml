@@ -7,11 +7,10 @@ metadata:
 
 spec:
     selector:
-        app: api
-        version: v1
-        platform: sweetrpg
-        package: game-systems
-        component: api
+        app.kubernetes.io/name: game-systems-api
+        app.kubernetes.io/version: v1
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: game-systems
     type: ClusterIP
     ports:
         - name: http
