@@ -16,14 +16,14 @@ spec:
             app: api
             version: v1
             platform: sweetrpg
-            package: gamesystems
+            package: game-systems
             component: api
     template:
         metadata:
             labels:
                 platform: sweetrpg
                 app: api
-                package: gamesystems
+                package: game-systems
                 component: api
                 version: v1
                 release: prometheus
@@ -33,7 +33,7 @@ spec:
                 prometheus.io/path: '/metrics'
                 prometheus.io/port: '8000'
                 openfeature.dev/enabled: "true"
-                openfeature.dev/featureflagsource: "sweetrpg-system/gamesystems-api"
+                openfeature.dev/featureflagsource: "sweetrpg-system/game-systems-api"
         spec:
             serviceAccountName: api
             enableServiceLinks: false
@@ -41,7 +41,7 @@ spec:
                 - name: sweetrpg-registry
             containers:
                 - name: app
-                  image: gamesystems-api
+                  image: game-systems-api
                   imagePullPolicy: Always
                   envFrom:
                       - configMapRef:

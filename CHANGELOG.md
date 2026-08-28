@@ -1,4 +1,15 @@
 
+## 0.2.3 - 2026-08-28
+
+### <!-- 2 -->🚜 Refactor
+- Rename gamesystems references to game-systems
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.2.2
+
+
+
 ## 0.2.2 - 2026-08-25
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks

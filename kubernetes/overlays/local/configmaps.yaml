@@ -8,8 +8,8 @@ metadata:
 data:
   ENV: local
   DB_SCHEME: mongodb
-  DB_HOST: mongodb.sweetrpg-gamesystems.svc.cluster.local:27017
-  DB_USER: gamesystems-api
-  DB_NAME: sweetrpg-gamesystems
+  DB_HOST: mongodb.sweetrpg-game-systems.svc.cluster.local:27017
+  DB_USER: game-systems-api
+  DB_NAME: sweetrpg-game-systems
   DB_OPTS: ""
   AUTH_API_URL: http://api-v1.sweetrpg-auth.svc.cluster.local:8000

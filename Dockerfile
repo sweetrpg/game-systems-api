@@ -4,8 +4,8 @@ FROM golang:1.26.5 AS builder
 
 ENV GOPROXY=http://proxy.golang.org
 
-RUN mkdir -p /src/gamesystems-api
-WORKDIR /src/gamesystems-api
+RUN mkdir -p /src/game-systems-api
+WORKDIR /src/game-systems-api
 
 # Copy the Go Modules manifests
 COPY go.mod go.mod
@@ -15,7 +15,7 @@ COPY go.sum go.sum
 RUN go mod download && go mod verify
 
 ADD . .
-RUN CGO_ENABLED=0 GOOS=linux go build -v -o /bin/server cmd/gamesystems-api/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -v -o /bin/server cmd/game-systems-api/main.go
 
 FROM alpine
 

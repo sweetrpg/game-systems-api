@@ -8,9 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	apiv "github.com/sweetrpg/api-core.go/vo"
 	"github.com/sweetrpg/common.go/logging"
-	"github.com/sweetrpg/gamesystems-api/authz"
-	"github.com/sweetrpg/gamesystems-api/constants"
-	"github.com/sweetrpg/gamesystems-api/models"
+	"github.com/sweetrpg/game-systems-api/authz"
+	"github.com/sweetrpg/game-systems-api/constants"
+	"github.com/sweetrpg/game-systems-api/models"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 

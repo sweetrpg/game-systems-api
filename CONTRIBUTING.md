@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for considering a contribution to `gamesystems-api`.
+Thanks for considering a contribution to `game-systems-api`.
 
 ## Branching
 
