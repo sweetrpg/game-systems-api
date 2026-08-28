@@ -55,21 +55,21 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/sweetrpg/gamesystems-api/authz/client.go (0.0%)</option>
+				<option value="file0">github.com/sweetrpg/game-systems-api/authz/client.go (0.0%)</option>
 				
-				<option value="file1">github.com/sweetrpg/gamesystems-api/authz/middleware.go (0.0%)</option>
+				<option value="file1">github.com/sweetrpg/game-systems-api/authz/middleware.go (0.0%)</option>
 				
-				<option value="file2">github.com/sweetrpg/gamesystems-api/cmd/gamesystems-api/main.go (0.0%)</option>
+				<option value="file2">github.com/sweetrpg/game-systems-api/cmd/game-systems-api/main.go (0.0%)</option>
 				
-				<option value="file3">github.com/sweetrpg/gamesystems-api/cmd/migrate-system-ids/main.go (12.8%)</option>
+				<option value="file3">github.com/sweetrpg/game-systems-api/cmd/migrate-system-ids/main.go (12.8%)</option>
 				
-				<option value="file4">github.com/sweetrpg/gamesystems-api/models/versioning.go (7.5%)</option>
+				<option value="file4">github.com/sweetrpg/game-systems-api/models/versioning.go (7.5%)</option>
 				
-				<option value="file5">github.com/sweetrpg/gamesystems-api/server/game_systems.go (15.5%)</option>
+				<option value="file5">github.com/sweetrpg/game-systems-api/server/game_systems.go (15.5%)</option>
 				
-				<option value="file6">github.com/sweetrpg/gamesystems-api/server/handlers.go (0.0%)</option>
+				<option value="file6">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
 				
-				<option value="file7">github.com/sweetrpg/gamesystems-api/server/status.go (0.0%)</option>
+				<option value="file7">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -326,10 +326,10 @@ import (
         "github.com/sweetrpg/api-core.go/tracing"
         "github.com/sweetrpg/common.go/logging"
         "github.com/sweetrpg/common.go/util"
-        "github.com/sweetrpg/gamesystems-api/authz"
-        "github.com/sweetrpg/gamesystems-api/constants"
-        "github.com/sweetrpg/gamesystems-api/models"
-        "github.com/sweetrpg/gamesystems-api/server"
+        "github.com/sweetrpg/game-systems-api/authz"
+        "github.com/sweetrpg/game-systems-api/constants"
+        "github.com/sweetrpg/game-systems-api/models"
+        "github.com/sweetrpg/game-systems-api/server"
         "github.com/sweetrpg/mongodb.go/database"
         "go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
@@ -372,7 +372,7 @@ import (
         "strings"
 
         "github.com/sweetrpg/common.go/logging"
-        "github.com/sweetrpg/gamesystems-api/models"
+        "github.com/sweetrpg/game-systems-api/models"
         "github.com/sweetrpg/mongodb.go/database"
         "go.mongodb.org/mongo-driver/bson"
 )
@@ -955,9 +955,9 @@ import (
         "github.com/gin-gonic/gin"
         apiv "github.com/sweetrpg/api-core.go/vo"
         "github.com/sweetrpg/common.go/logging"
-        "github.com/sweetrpg/gamesystems-api/authz"
-        "github.com/sweetrpg/gamesystems-api/constants"
-        "github.com/sweetrpg/gamesystems-api/models"
+        "github.com/sweetrpg/game-systems-api/authz"
+        "github.com/sweetrpg/game-systems-api/constants"
+        "github.com/sweetrpg/game-systems-api/models"
         "go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -1290,7 +1290,7 @@ func setCurrentGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
 
 import (
         "github.com/gin-gonic/gin"
-        "github.com/sweetrpg/gamesystems-api/authz"
+        "github.com/sweetrpg/game-systems-api/authz"
 )
 
 func SetupHandlers(g *gin.Engine, authzClient *authz.Client) <span class="cov0" title="0">{
