@@ -1,4 +1,12 @@
 
+## 0.2.4 - 2026-09-02
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.2.3
+- Update to standard labels
+
+
+
 ## 0.2.3 - 2026-08-28
 
 ### <!-- 2 -->🚜 Refactor
