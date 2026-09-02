@@ -10,9 +10,36 @@ import (
 	"github.com/sweetrpg/common.go/logging"
 	"github.com/sweetrpg/game-systems-api/authz"
 	"github.com/sweetrpg/game-systems-api/constants"
+	"github.com/sweetrpg/game-systems-api/internal/events"
 	"github.com/sweetrpg/game-systems-api/models"
 	"go.mongodb.org/mongo-driver/mongo"
 )
+
+// systemEvents publishes a change event after every committed mutation that alters a game
+// system's live/current title. Nil when NATS_URL is unset (publishing disabled).
+var systemEvents events.SystemPublisher
+
+// publishSystemChange loads the system's authoritative current version and emits one
+// gamesystems.events.system.<action> event. Fail-open: any problem loading the system is logged
+// and the mutation response is unaffected (the publisher itself is already fail-open).
+func publishSystemChange(c *gin.Context, action, systemID string) {
+	if systemEvents == nil {
+		return
+	}
+	cur, err := models.Get(c.Request.Context(), systemID)
+	if err != nil || cur == nil {
+		logging.Logger.Warn("skipped system change event: current version unavailable",
+			"system_id", systemID, "action", action, "error", err)
+		return
+	}
+	data := map[string]any{"title": cur.Name}
+	switch action {
+	case "created":
+		systemEvents.PublishSystemCreated(c.Request.Context(), systemID, cur.Version, data)
+	case "updated":
+		systemEvents.PublishSystemUpdated(c.Request.Context(), systemID, cur.Version, data)
+	}
+}
 
 type submittedVersionResponse struct {
 	Version int    `json:"version"`
@@ -36,8 +63,10 @@ type rejectVersionRequest struct {
 	Note string `json:"note"`
 }
 
-func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client) {
+func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) {
 	logging.Logger.Info("Setting up game system endpoint handlers...")
+
+	systemEvents = pub
 
 	g.GET("/systems", listGameSystems)
 	g.GET("/systems/:id", getGameSystem)
@@ -113,6 +142,7 @@ func createGameSystem(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
 		return
 	}
+	publishSystemChange(c, "created", *id)
 	c.JSON(http.StatusCreated, result)
 }
 
@@ -205,6 +235,7 @@ func patchGameSystem(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
 		return
 	}
+	publishSystemChange(c, "updated", id)
 	c.JSON(http.StatusOK, result)
 }
 
@@ -281,6 +312,7 @@ func acceptGameSystemVersion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "accept_failed", Message: err.Error()})
 		return
 	}
+	publishSystemChange(c, "updated", id)
 	c.JSON(http.StatusOK, reviewVersionResponse{Version: accepted.Version, State: string(accepted.State), Conflicts: conflicts})
 }
 
@@ -335,5 +367,6 @@ func setCurrentGameSystemVersion(c *gin.Context) {
 		c.JSON(http.StatusNotFound, apiv.ErrorVO{})
 		return
 	}
+	publishSystemChange(c, "updated", id)
 	c.JSON(http.StatusOK, result)
 }
