@@ -63,13 +63,17 @@
 				
 				<option value="file3">github.com/sweetrpg/game-systems-api/cmd/migrate-system-ids/main.go (12.8%)</option>
 				
-				<option value="file4">github.com/sweetrpg/game-systems-api/models/versioning.go (7.5%)</option>
+				<option value="file4">github.com/sweetrpg/game-systems-api/internal/events/envelope.go (85.7%)</option>
 				
-				<option value="file5">github.com/sweetrpg/game-systems-api/server/game_systems.go (15.5%)</option>
+				<option value="file5">github.com/sweetrpg/game-systems-api/internal/events/publisher.go (17.4%)</option>
 				
-				<option value="file6">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
+				<option value="file6">github.com/sweetrpg/game-systems-api/models/versioning.go (7.5%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
+				<option value="file7">github.com/sweetrpg/game-systems-api/server/game_systems.go (35.6%)</option>
+				
+				<option value="file8">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
+				
+				<option value="file9">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -328,6 +332,7 @@ import (
         "github.com/sweetrpg/common.go/util"
         "github.com/sweetrpg/game-systems-api/authz"
         "github.com/sweetrpg/game-systems-api/constants"
+        "github.com/sweetrpg/game-systems-api/internal/events"
         "github.com/sweetrpg/game-systems-api/models"
         "github.com/sweetrpg/game-systems-api/server"
         "github.com/sweetrpg/mongodb.go/database"
@@ -355,7 +360,15 @@ func main() <span class="cov0" title="0">{
 
         <span class="cov0" title="0">authzClient := authz.NewClient(util.GetEnv(constants.AUTH_API_URL, ""))
 
-        server.SetupHandlers(r, authzClient)
+        var systemPublisher events.SystemPublisher
+        if pub, err := events.NewPublisher(context.Background()); err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Failed to initialize game-system event publisher", "error", err.Error())
+        }</span> else<span class="cov0" title="0"> if pub != nil </span><span class="cov0" title="0">{
+                defer pub.Close()
+                systemPublisher = pub
+        }</span>
+
+        <span class="cov0" title="0">server.SetupHandlers(r, authzClient, systemPublisher)
 
         _ = r.Run(util.GetEnv(apiconstants.BIND_ADDRESS, ":8000"))</span>
 }
@@ -479,7 +492,203 @@ func slugify(s string) string <span class="cov10" title="4">{
 }
 </pre>
 		
-		<pre class="file" id="file4" style="display: none">package models
+		<pre class="file" id="file4" style="display: none">package events
+
+import (
+        "encoding/json"
+        "time"
+)
+
+// Envelope is the JSON event payload published to NATS JetStream, conforming to the platform
+// envelope schema in sweetrpg/platform's platform-messaging-nats spec.
+//
+// Fields: event_id (UUID string), occurred_at (RFC3339), source ("game-systems-api"),
+// entity_type ("system"), entity_id (the system's meta document ID), action
+// (created|updated|deleted), revision (the system's post-change version; 0 for delete),
+// data (object; for system.updated it carries at least the current title; null for delete).
+type Envelope struct {
+        EventID    string          `json:"event_id"`
+        OccurredAt string          `json:"occurred_at"`
+        Source     string          `json:"source"`
+        EntityType string          `json:"entity_type"`
+        EntityID   string          `json:"entity_id"`
+        Action     string          `json:"action"`
+        Revision   int             `json:"revision"`
+        Data       json.RawMessage `json:"data"`
+}
+
+const sourceName = "game-systems-api"
+
+// NewEnvelope builds an event envelope. eventID must be a UUID string, revision is the entity's
+// post-change version (0 for delete), and data is marshalled to JSON (null when nil).
+func NewEnvelope(eventID, entityType, entityID, action string, revision int, data any) (*Envelope, error) <span class="cov10" title="3">{
+        rawData := json.RawMessage("null")
+        if data != nil </span><span class="cov1" title="1">{
+                b, err := json.Marshal(data)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov1" title="1">rawData = b</span>
+        }
+
+        <span class="cov10" title="3">return &amp;Envelope{
+                EventID:    eventID,
+                OccurredAt: time.Now().UTC().Format(time.RFC3339),
+                Source:     sourceName,
+                EntityType: entityType,
+                EntityID:   entityID,
+                Action:     action,
+                Revision:   revision,
+                Data:       rawData,
+        }, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">package events
+
+import (
+        "context"
+        "encoding/json"
+        "fmt"
+        "os"
+        "time"
+
+        "github.com/google/uuid"
+        "github.com/nats-io/nats.go"
+        "github.com/nats-io/nats.go/jetstream"
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/common.go/util"
+)
+
+const (
+        entityTypeSystem = "system"
+        subjectPrefix    = "gamesystems.events"
+)
+
+// SystemPublisher is the seam the handlers depend on. The methods return nothing: publishing is
+// fire-and-forget and fail-open, so a broker problem can never surface at a call site. A nil
+// SystemPublisher is a valid no-op (publishing disabled).
+type SystemPublisher interface {
+        PublishSystemCreated(ctx context.Context, systemID string, revision int, data any)
+        PublishSystemUpdated(ctx context.Context, systemID string, revision int, data any)
+        PublishSystemDeleted(ctx context.Context, systemID string)
+}
+
+// Publisher publishes game-system change events to NATS JetStream.
+type Publisher struct {
+        conn           *nats.Conn
+        js             jetstream.JetStream
+        publishTimeout time.Duration
+}
+
+var _ SystemPublisher = (*Publisher)(nil)
+
+// NewPublisher builds a Publisher from the environment. It returns (nil, nil) when NATS_URL is
+// unset, so the caller treats event publishing as disabled rather than a startup error.
+//
+//        NATS_URL           NATS server URL (unset -&gt; publishing disabled)
+//        NATS_CREDS         credentials file path (optional)
+//        NATS_USER/NATS_PASSWORD  username/password auth (used when NATS_CREDS is unset)
+//        PUBLISH_TIMEOUT_MS bounded wait for a publish ack (default 3000)
+func NewPublisher(ctx context.Context) (*Publisher, error) <span class="cov0" title="0">{
+        natsURL := util.GetEnv("NATS_URL", "")
+        if natsURL == "" </span><span class="cov0" title="0">{
+                logging.Logger.Warn("NATS_URL not set; game-system event publishing disabled")
+                return nil, nil
+        }</span>
+
+        <span class="cov0" title="0">opts := []nats.Option{}
+        if creds := os.Getenv("NATS_CREDS"); creds != "" </span><span class="cov0" title="0">{
+                opts = append(opts, nats.UserCredentials(creds))
+        }</span> else<span class="cov0" title="0"> if user := os.Getenv("NATS_USER"); user != "" </span><span class="cov0" title="0">{
+                opts = append(opts, nats.UserInfo(user, os.Getenv("NATS_PASSWORD")))
+        }</span>
+
+        <span class="cov0" title="0">conn, err := nats.Connect(natsURL, opts...)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("nats connect: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">js, err := jetstream.New(conn)
+        if err != nil </span><span class="cov0" title="0">{
+                conn.Close()
+                return nil, fmt.Errorf("jetstream: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">timeoutMs := util.GetEnvInt("PUBLISH_TIMEOUT_MS", 3000)
+        p := &amp;Publisher{
+                conn:           conn,
+                js:             js,
+                publishTimeout: time.Duration(timeoutMs) * time.Millisecond,
+        }
+
+        logging.Logger.Info("Game-system event publisher initialized", "nats_url", natsURL, "publish_timeout_ms", timeoutMs)
+        return p, nil</span>
+}
+
+// Close closes the NATS connection.
+func (p *Publisher) Close() <span class="cov0" title="0">{
+        if p != nil &amp;&amp; p.conn != nil </span><span class="cov0" title="0">{
+                p.conn.Close()
+        }</span>
+}
+
+func (p *Publisher) PublishSystemCreated(ctx context.Context, systemID string, revision int, data any) <span class="cov1" title="1">{
+        p.publish(ctx, systemID, "created", revision, data)
+}</span>
+
+func (p *Publisher) PublishSystemUpdated(ctx context.Context, systemID string, revision int, data any) <span class="cov5" title="2">{
+        p.publish(ctx, systemID, "updated", revision, data)
+}</span>
+
+func (p *Publisher) PublishSystemDeleted(ctx context.Context, systemID string) <span class="cov1" title="1">{
+        p.publish(ctx, systemID, "deleted", 0, nil)
+}</span>
+
+func (p *Publisher) publish(ctx context.Context, systemID, action string, revision int, data any) <span class="cov10" title="4">{
+        if p == nil || p.conn == nil </span><span class="cov10" title="4">{
+                return
+        }</span>
+
+        <span class="cov0" title="0">eventID := uuid.NewString()
+        envelope, err := NewEnvelope(eventID, entityTypeSystem, systemID, action, revision, data)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("event envelope build failed (event dropped)", "system_id", systemID, "action", action, "error", err)
+                return
+        }</span>
+
+        <span class="cov0" title="0">subject, body, msgID, err := buildPublish(envelope)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("event marshal failed (event dropped)", "system_id", systemID, "action", action, "error", err)
+                return
+        }</span>
+
+        <span class="cov0" title="0">ctx, cancel := context.WithTimeout(ctx, p.publishTimeout)
+        defer cancel()
+
+        // ponytail: fail-open on error/timeout. An in-process retry queue loses events on restart
+        // and grows unbounded; JetStream redelivery is the consumer's job, not ours.
+        if _, err := p.js.Publish(ctx, subject, body, jetstream.WithMsgID(msgID)); err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("event publish failed (event dropped)", "subject", subject, "system_id", systemID, "event_id", eventID, "error", err)
+                return
+        }</span>
+
+        <span class="cov0" title="0">logging.Logger.Info("event published", "subject", subject, "system_id", systemID, "event_id", eventID)</span>
+}
+
+// buildPublish derives the subject, JSON body, and de-duplication message ID for an envelope.
+// The message ID is the envelope's event_id, so a redelivered publish is de-duplicated by the
+// stream's duplicate window.
+func buildPublish(e *Envelope) (subject string, body []byte, msgID string, err error) <span class="cov1" title="1">{
+        body, err = json.Marshal(e)
+        if err != nil </span><span class="cov0" title="0">{
+                return "", nil, "", err
+        }</span>
+        <span class="cov1" title="1">return fmt.Sprintf("%s.%s.%s", subjectPrefix, e.EntityType, e.Action), body, e.EventID, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">package models
 
 import (
         "context"
@@ -945,7 +1154,7 @@ func SetCurrentVersion(c context.Context, id string, version int) (*GameSystemVe
 }
 </pre>
 		
-		<pre class="file" id="file5" style="display: none">package server
+		<pre class="file" id="file7" style="display: none">package server
 
 import (
         "encoding/json"
@@ -957,9 +1166,36 @@ import (
         "github.com/sweetrpg/common.go/logging"
         "github.com/sweetrpg/game-systems-api/authz"
         "github.com/sweetrpg/game-systems-api/constants"
+        "github.com/sweetrpg/game-systems-api/internal/events"
         "github.com/sweetrpg/game-systems-api/models"
         "go.mongodb.org/mongo-driver/mongo"
 )
+
+// systemEvents publishes a change event after every committed mutation that alters a game
+// system's live/current title. Nil when NATS_URL is unset (publishing disabled).
+var systemEvents events.SystemPublisher
+
+// publishSystemChange loads the system's authoritative current version and emits one
+// gamesystems.events.system.&lt;action&gt; event. Fail-open: any problem loading the system is logged
+// and the mutation response is unaffected (the publisher itself is already fail-open).
+func publishSystemChange(c *gin.Context, action, systemID string) <span class="cov4" title="2">{
+        if systemEvents == nil </span><span class="cov0" title="0">{
+                return
+        }</span>
+        <span class="cov4" title="2">cur, err := models.Get(c.Request.Context(), systemID)
+        if err != nil || cur == nil </span><span class="cov0" title="0">{
+                logging.Logger.Warn("skipped system change event: current version unavailable",
+                        "system_id", systemID, "action", action, "error", err)
+                return
+        }</span>
+        <span class="cov4" title="2">data := map[string]any{"title": cur.Name}
+        switch action </span>{
+        case "created":<span class="cov1" title="1">
+                systemEvents.PublishSystemCreated(c.Request.Context(), systemID, cur.Version, data)</span>
+        case "updated":<span class="cov1" title="1">
+                systemEvents.PublishSystemUpdated(c.Request.Context(), systemID, cur.Version, data)</span>
+        }
+}
 
 type submittedVersionResponse struct {
         Version int    `json:"version"`
@@ -983,8 +1219,10 @@ type rejectVersionRequest struct {
         Note string `json:"note"`
 }
 
-func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client) <span class="cov10" title="4">{
+func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov10" title="8">{
         logging.Logger.Info("Setting up game system endpoint handlers...")
+
+        systemEvents = pub
 
         g.GET("/systems", listGameSystems)
         g.GET("/systems/:id", getGameSystem)
@@ -1002,26 +1240,26 @@ func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client) <span cla
         g.POST("/systems/:id/versions/:version/current", reviewRoles, setCurrentGameSystemVersion)
 }</span>
 
-func listGameSystems(c *gin.Context) <span class="cov0" title="0">{
+func listGameSystems(c *gin.Context) <span class="cov1" title="1">{
         results, err := models.List(c.Request.Context())
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov0" title="0">c.JSON(http.StatusOK, results)</span>
+        <span class="cov1" title="1">c.JSON(http.StatusOK, results)</span>
 }
 
-func getGameSystem(c *gin.Context) <span class="cov8" title="3">{
+func getGameSystem(c *gin.Context) <span class="cov7" title="4">{
         result, err := models.Get(c.Request.Context(), c.Param("id"))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov8" title="3">if result == nil </span><span class="cov1" title="1">{
+        <span class="cov7" title="4">if result == nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
-        <span class="cov5" title="2">c.JSON(http.StatusOK, result)</span>
+        <span class="cov5" title="3">c.JSON(http.StatusOK, result)</span>
 }
 
 type createGameSystemRequest struct {
@@ -1029,17 +1267,17 @@ type createGameSystemRequest struct {
         SystemID                 string `json:"system_id" binding:"required"`
 }
 
-func createGameSystem(c *gin.Context) <span class="cov5" title="2">{
+func createGameSystem(c *gin.Context) <span class="cov5" title="3">{
         var req createGameSystemRequest
         if err := c.ShouldBindJSON(&amp;req); err != nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: err.Error()})
                 return
         }</span>
-        <span class="cov1" title="1">if !models.ValidateSystemID(req.SystemID) </span><span class="cov0" title="0">{
+        <span class="cov4" title="2">if !models.ValidateSystemID(req.SystemID) </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "system_id must be a lowercase kebab-case slug"})
                 return
         }</span>
-        <span class="cov1" title="1">entity := req.GameSystemVersion
+        <span class="cov4" title="2">entity := req.GameSystemVersion
 
         id, err := models.Create(c.Request.Context(), &amp;entity, req.SystemID, authz.Subject(c))
         if err != nil </span><span class="cov1" title="1">{
@@ -1050,20 +1288,21 @@ func createGameSystem(c *gin.Context) <span class="cov5" title="2">{
                 <span class="cov0" title="0">c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "create_failed", Message: err.Error()})
                 return</span>
         }
-        <span class="cov0" title="0">if id == nil </span><span class="cov0" title="0">{
+        <span class="cov1" title="1">if id == nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "create_failed", Message: "no id returned"})
                 return
         }</span>
 
-        <span class="cov0" title="0">result, err := models.Get(c.Request.Context(), *id)
+        <span class="cov1" title="1">result, err := models.Get(c.Request.Context(), *id)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov0" title="0">c.JSON(http.StatusCreated, result)</span>
+        <span class="cov1" title="1">publishSystemChange(c, "created", *id)
+        c.JSON(http.StatusCreated, result)</span>
 }
 
-func patchGameSystem(c *gin.Context) <span class="cov0" title="0">{
+func patchGameSystem(c *gin.Context) <span class="cov4" title="2">{
         id := c.Param("id")
 
         var req map[string]json.RawMessage
@@ -1072,24 +1311,24 @@ func patchGameSystem(c *gin.Context) <span class="cov0" title="0">{
                 return
         }</span>
 
-        <span class="cov0" title="0">existing, err := models.Get(c.Request.Context(), id)
+        <span class="cov4" title="2">existing, err := models.Get(c.Request.Context(), id)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov0" title="0">if existing == nil </span><span class="cov0" title="0">{
+        <span class="cov4" title="2">if existing == nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
 
-        <span class="cov0" title="0">updated := *existing
+        <span class="cov4" title="2">updated := *existing
         hasKnownField := false
-        for field, raw := range req </span><span class="cov0" title="0">{
+        for field, raw := range req </span><span class="cov4" title="2">{
                 if len(raw) == 0 || string(raw) == "null" </span><span class="cov0" title="0">{
                         continue</span>
                 }
-                <span class="cov0" title="0">switch field </span>{
-                case "name":<span class="cov0" title="0">
+                <span class="cov4" title="2">switch field </span>{
+                case "name":<span class="cov4" title="2">
                         if err := json.Unmarshal(raw, &amp;updated.Name); err != nil </span><span class="cov0" title="0">{
                                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: field + ": " + err.Error()})
                                 return
@@ -1117,42 +1356,43 @@ func patchGameSystem(c *gin.Context) <span class="cov0" title="0">{
                 default:<span class="cov0" title="0">
                         continue</span>
                 }
-                <span class="cov0" title="0">hasKnownField = true</span>
+                <span class="cov4" title="2">hasKnownField = true</span>
         }
-        <span class="cov0" title="0">if !hasKnownField </span><span class="cov0" title="0">{
+        <span class="cov4" title="2">if !hasKnownField </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "no recognized fields to change"})
                 return
         }</span>
 
-        <span class="cov0" title="0">roles := authz.Roles(c)
+        <span class="cov4" title="2">roles := authz.Roles(c)
         state := models.VersionStateSubmitted
-        if authz.HasRole(roles, authz.RoleAdmin) || authz.HasRole(roles, authz.RoleEditor) </span><span class="cov0" title="0">{
+        if authz.HasRole(roles, authz.RoleAdmin) || authz.HasRole(roles, authz.RoleEditor) </span><span class="cov1" title="1">{
                 state = models.VersionStateLive
         }</span>
 
-        <span class="cov0" title="0">version, err := models.CreateVersion(c.Request.Context(), id, &amp;updated, state, authz.Subject(c))
+        <span class="cov4" title="2">version, err := models.CreateVersion(c.Request.Context(), id, &amp;updated, state, authz.Subject(c))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "update_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov0" title="0">if version == nil </span><span class="cov0" title="0">{
+        <span class="cov4" title="2">if version == nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
 
-        <span class="cov0" title="0">if state != models.VersionStateLive </span><span class="cov0" title="0">{
+        <span class="cov4" title="2">if state != models.VersionStateLive </span><span class="cov1" title="1">{
                 c.JSON(http.StatusAccepted, submittedVersionResponse{
                         Version: version.Version, State: string(version.State), Message: "Change submitted for review",
                 })
                 return
         }</span>
 
-        <span class="cov0" title="0">result, err := models.Get(c.Request.Context(), id)
+        <span class="cov1" title="1">result, err := models.Get(c.Request.Context(), id)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov0" title="0">c.JSON(http.StatusOK, result)</span>
+        <span class="cov1" title="1">publishSystemChange(c, "updated", id)
+        c.JSON(http.StatusOK, result)</span>
 }
 
 func versionParam(c *gin.Context) (int, bool) <span class="cov0" title="0">{
@@ -1228,7 +1468,8 @@ func acceptGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "accept_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov0" title="0">c.JSON(http.StatusOK, reviewVersionResponse{Version: accepted.Version, State: string(accepted.State), Conflicts: conflicts})</span>
+        <span class="cov0" title="0">publishSystemChange(c, "updated", id)
+        c.JSON(http.StatusOK, reviewVersionResponse{Version: accepted.Version, State: string(accepted.State), Conflicts: conflicts})</span>
 }
 
 func rejectGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
@@ -1282,24 +1523,26 @@ func setCurrentGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
-        <span class="cov0" title="0">c.JSON(http.StatusOK, result)</span>
+        <span class="cov0" title="0">publishSystemChange(c, "updated", id)
+        c.JSON(http.StatusOK, result)</span>
 }
 </pre>
 		
-		<pre class="file" id="file6" style="display: none">package server
+		<pre class="file" id="file8" style="display: none">package server
 
 import (
         "github.com/gin-gonic/gin"
         "github.com/sweetrpg/game-systems-api/authz"
+        "github.com/sweetrpg/game-systems-api/internal/events"
 )
 
-func SetupHandlers(g *gin.Engine, authzClient *authz.Client) <span class="cov0" title="0">{
-        setupGameSystemHandlers(g, authzClient)
+func SetupHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov0" title="0">{
+        setupGameSystemHandlers(g, authzClient, pub)
         setupStatusHandlers(g)
 }</span>
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">package server
+		<pre class="file" id="file9" style="display: none">package server
 
 import (
         "net/http"
