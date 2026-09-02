@@ -1,4 +1,15 @@
 
+## 0.3.0 - 2026-09-02
+
+### <!-- 0 -->🚀 Features
+- Publish NATS change events on committed system mutations
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.2.4
+
+
+
 ## 0.2.4 - 2026-09-02
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
