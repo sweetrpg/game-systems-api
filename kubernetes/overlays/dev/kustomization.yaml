@@ -7,9 +7,16 @@ resources:
     - ../../base
     - atlas-db-user.yaml
     - configmaps.yaml
+    - externalsecret-nats.yaml
     - ingress.yaml
     - middlewares.yaml
     - secrets/db.yaml
+
+patches:
+    - path: deployment-nats.yaml
+      target:
+          kind: Deployment
+          name: api-v1
 
 labels:
     - pairs:

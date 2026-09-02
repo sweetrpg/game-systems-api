@@ -13,6 +13,7 @@ import (
 	"github.com/sweetrpg/common.go/util"
 	"github.com/sweetrpg/game-systems-api/authz"
 	"github.com/sweetrpg/game-systems-api/constants"
+	"github.com/sweetrpg/game-systems-api/internal/events"
 	"github.com/sweetrpg/game-systems-api/models"
 	"github.com/sweetrpg/game-systems-api/server"
 	"github.com/sweetrpg/mongodb.go/database"
@@ -40,7 +41,15 @@ func main() {
 
 	authzClient := authz.NewClient(util.GetEnv(constants.AUTH_API_URL, ""))
 
-	server.SetupHandlers(r, authzClient)
+	var systemPublisher events.SystemPublisher
+	if pub, err := events.NewPublisher(context.Background()); err != nil {
+		logging.Logger.Error("Failed to initialize game-system event publisher", "error", err.Error())
+	} else if pub != nil {
+		defer pub.Close()
+		systemPublisher = pub
+	}
+
+	server.SetupHandlers(r, authzClient, systemPublisher)
 
 	_ = r.Run(util.GetEnv(apiconstants.BIND_ADDRESS, ":8000"))
 }

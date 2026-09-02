@@ -1,0 +1,7 @@
+# JSON 6902 patch: append api-nats to the app container's envFrom without replacing the list
+# (a strategic-merge patch on envFrom has replace semantics - no merge key).
+- op: add
+  path: /spec/template/spec/containers/0/envFrom/-
+  value:
+    secretRef:
+      name: api-nats
