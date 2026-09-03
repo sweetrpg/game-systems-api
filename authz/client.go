@@ -41,23 +41,68 @@ type InvalidTokenError struct{}
 
 func (InvalidTokenError) Error() string { return "authz: invalid or missing token" }
 
-// Client calls auth-api's /authz/check endpoint.
+// Client calls auth-api's /authz/check endpoint (identity + roles) and users-api's /profile
+// endpoint (resolving a verified subject to its canonical users._id).
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL      string
+	usersBaseURL string
+	http         *http.Client
 }
 
-// NewClient builds a Client against auth-api's base URL. An empty baseURL is accepted so the
-// service can still start when AUTH_API_URL isn't configured; every Check call will then fail
-// with a transport error, which RequireAnyRole surfaces as a 503.
-func NewClient(baseURL string) *Client {
+// NewClient builds a Client against auth-api's base URL and users-api's base URL. An empty
+// authBaseURL is accepted so the service can still start when AUTH_API_URL isn't configured;
+// every Check call then fails with a transport error, which RequireAnyRole surfaces as a 503.
+// An empty usersBaseURL makes ResolveUserID always return "" - RequireAnyRole then rejects
+// writes it cannot attribute rather than stamping an empty actor.
+func NewClient(authBaseURL, usersBaseURL string) *Client {
 	return &Client{
-		baseURL: baseURL,
+		baseURL:      authBaseURL,
+		usersBaseURL: usersBaseURL,
 		http: &http.Client{
 			Timeout:   5 * time.Second,
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
 		},
 	}
+}
+
+// profileResponse is the slice of users-api's /profile response this service reads.
+type profileResponse struct {
+	UserID string `json:"user_id"`
+}
+
+// ResolveUserID exchanges a verified bearer token for the caller's canonical users._id by
+// calling users-api's GET /profile. Returns "" when the token is missing, users-api is
+// unconfigured or unavailable, or the subject has no provisioned profile (HTTP 404/401).
+func (c *Client) ResolveUserID(ctx context.Context, token string) string {
+	if c.usersBaseURL == "" || token == "" {
+		return ""
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.usersBaseURL+"/profile", nil)
+	if err != nil {
+		logging.Logger.Debug("users-api resolve: build request", "error", err.Error())
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		logging.Logger.Debug("users-api resolve: request failed", "error", err.Error())
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		logging.Logger.Debug("users-api resolve: unexpected status", "status", resp.StatusCode)
+		return ""
+	}
+
+	var out profileResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		logging.Logger.Debug("users-api resolve: decode response", "error", err.Error())
+		return ""
+	}
+	return out.UserID
 }
 
 // Check verifies token against auth-api and returns the caller's allowed/roles/subject for the

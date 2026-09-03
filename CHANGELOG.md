@@ -1,4 +1,20 @@
 
+## 0.4.0 - 2026-09-03
+
+### <!-- 0 -->🚀 Features
+- Adopt platform audit-fields convention on EntityMeta
+- Carry the meta audit block in GET/POST/PATCH /systems responses
+
+
+### <!-- 1 -->🐛 Bug Fixes
+- Key version writes on the canonical meta _id, not the raw id arg
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.3.0
+
+
+
 ## 0.3.0 - 2026-09-02
 
 ### <!-- 0 -->🚀 Features

@@ -57,13 +57,20 @@ func EnsureIndexes(c context.Context) error {
 	return nil
 }
 
-// GetMeta fetches a game system's meta record, matching id against either the document `_id`
-// or the `system_id` slug in a single query.
+// notDeletedMeta excludes soft-deleted meta records (deleted_at absent or null) - the platform
+// audit-fields read filter (PADR-0001).
+var notDeletedMeta = bson.D{{Key: "deleted_at", Value: nil}}
+
+// GetMeta fetches a live (non-soft-deleted) game system's meta record, matching id against
+// either the document `_id` or the `system_id` slug.
 func GetMeta(c context.Context, id string) (*EntityMeta, error) {
-	filter := bson.D{{Key: "$or", Value: bson.A{
-		bson.D{{Key: "_id", Value: id}},
-		bson.D{{Key: "system_id", Value: id}},
-	}}}
+	filter := bson.D{
+		{Key: "deleted_at", Value: nil},
+		{Key: "$or", Value: bson.A{
+			bson.D{{Key: "_id", Value: id}},
+			bson.D{{Key: "system_id", Value: id}},
+		}},
+	}
 	results, err := database.Query[EntityMeta](metaCollection, filter, nil, nil, 0, 1)
 	if err != nil {
 		return nil, err
@@ -87,9 +94,9 @@ func GetVersion(c context.Context, recordID string, version int) (*GameSystemVer
 	return results[0], nil
 }
 
-// Get returns a game system's meta merged with its current version's data - the flattened
-// current view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
-func Get(c context.Context, id string) (*GameSystemVersion, error) {
+// Get returns a game system's current version flattened with its stable record's audit block -
+// the view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
+func Get(c context.Context, id string) (*GameSystemView, error) {
 	meta, err := GetMeta(c, id)
 	if err != nil {
 		return nil, err
@@ -97,15 +104,43 @@ func Get(c context.Context, id string) (*GameSystemVersion, error) {
 	if meta == nil {
 		return nil, nil
 	}
-	return GetVersion(c, meta.ID, meta.CurrentVersion)
+	version, err := GetVersion(c, meta.ID, meta.CurrentVersion)
+	if err != nil || version == nil {
+		return nil, err
+	}
+	return &GameSystemView{GameSystemVersion: *version, Auditable: meta.Auditable}, nil
 }
 
-// List returns every live game system's current version - the flattened view GET /systems
-// returns.
-func List(c context.Context) ([]*GameSystemVersion, error) {
-	filter := bson.D{{Key: "state", Value: string(VersionStateLive)}}
+// List returns every live game system's current version, each flattened with its record's audit
+// block. Soft-deleted systems (deleted_at set on their meta record) are excluded.
+func List(c context.Context) ([]*GameSystemView, error) {
+	metas, err := database.Query[EntityMeta](metaCollection, notDeletedMeta, nil, nil, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(metas) == 0 {
+		return []*GameSystemView{}, nil
+	}
+	auditByRecordID := make(map[string]modelcore.Auditable, len(metas))
+	values := make(bson.A, len(metas))
+	for i, m := range metas {
+		auditByRecordID[m.ID] = m.Auditable
+		values[i] = m.ID
+	}
+	filter := bson.D{
+		{Key: "state", Value: string(VersionStateLive)},
+		{Key: "record_id", Value: bson.D{{Key: "$in", Value: values}}},
+	}
 	sortOrder := bson.D{{Key: "name", Value: 1}}
-	return database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
+	versions, err := database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]*GameSystemView, 0, len(versions))
+	for _, v := range versions {
+		views = append(views, &GameSystemView{GameSystemVersion: *v, Auditable: auditByRecordID[v.RecordID]})
+	}
+	return views, nil
 }
 
 // ListVersions returns every version of a game system, newest first.
@@ -125,11 +160,15 @@ func archiveVersion(c context.Context, recordID string, version int) error {
 	return setVersionState(c, recordID, version, bson.D{{Key: "state", Value: string(VersionStateArchived)}})
 }
 
-func setMetaCurrentVersion(c context.Context, recordID string, version int) error {
+func setMetaCurrentVersion(c context.Context, recordID string, version int, actingUserID string) error {
 	_, err := database.Db.Collection(metaCollection).UpdateOne(
 		c,
 		bson.D{{Key: "_id", Value: recordID}},
-		bson.D{{Key: "$set", Value: bson.D{{Key: "current_version", Value: version}}}},
+		bson.D{{Key: "$set", Value: bson.D{
+			{Key: "current_version", Value: version},
+			{Key: "updated_at", Value: time.Now()},
+			{Key: "updated_by", Value: actingUserID},
+		}}},
 	)
 	return err
 }
@@ -151,7 +190,8 @@ func nextVersionNumber(c context.Context, recordID string) (int, error) {
 func Create(c context.Context, gs *GameSystemVersion, systemID string, createdBy string) (*string, error) {
 	now := time.Now()
 	metaID := primitive.NewObjectID().Hex()
-	meta := EntityMeta{ID: metaID, SystemID: systemID, CurrentVersion: 1, CreatedAt: now, CreatedBy: createdBy}
+	meta := EntityMeta{ID: metaID, SystemID: systemID, CurrentVersion: 1}
+	modelcore.StampCreate(&meta.Auditable, createdBy, now)
 	if _, err := database.Insert[EntityMeta](metaCollection, meta); err != nil {
 		return nil, err
 	}
@@ -181,6 +221,9 @@ func CreateVersion(c context.Context, id string, gs *GameSystemVersion, state Ve
 	if meta == nil {
 		return nil, nil
 	}
+	// id may have arrived as the system_id slug; every version/meta write below keys on the
+	// canonical _id, which is also what record_id holds.
+	id = meta.ID
 
 	nextVersion, err := nextVersionNumber(c, id)
 	if err != nil {
@@ -204,7 +247,7 @@ func CreateVersion(c context.Context, id string, gs *GameSystemVersion, state Ve
 		if err := archiveVersion(c, id, meta.CurrentVersion); err != nil {
 			return nil, err
 		}
-		if err := setMetaCurrentVersion(c, id, nextVersion); err != nil {
+		if err := setMetaCurrentVersion(c, id, nextVersion, submittedBy); err != nil {
 			return nil, err
 		}
 	}
@@ -285,6 +328,7 @@ func AcceptVersion(c context.Context, id string, version int, selectedFields []s
 	if meta == nil {
 		return nil, nil, fmt.Errorf("game system %s: meta record not found", id)
 	}
+	id = meta.ID // normalize a system_id slug to the canonical _id
 
 	current, err := GetVersion(c, id, meta.CurrentVersion)
 	if err != nil {
@@ -308,7 +352,7 @@ func AcceptVersion(c context.Context, id string, version int, selectedFields []s
 		}); err != nil {
 			return nil, nil, err
 		}
-		if err := setMetaCurrentVersion(c, id, version); err != nil {
+		if err := setMetaCurrentVersion(c, id, version, reviewedBy); err != nil {
 			return nil, nil, err
 		}
 		submitted.State = VersionStateLive
@@ -372,7 +416,7 @@ func AcceptVersion(c context.Context, id string, version int, selectedFields []s
 	if err := archiveVersion(c, id, meta.CurrentVersion); err != nil {
 		return nil, nil, err
 	}
-	if err := setMetaCurrentVersion(c, id, nextVersion); err != nil {
+	if err := setMetaCurrentVersion(c, id, nextVersion, reviewedBy); err != nil {
 		return nil, nil, err
 	}
 	if err := setVersionState(c, id, version, bson.D{
@@ -432,7 +476,7 @@ func RetractVersion(c context.Context, id string, version int, submitterID strin
 }
 
 // SetCurrentVersion rolls a game system back (or forward) to an arbitrary existing version.
-func SetCurrentVersion(c context.Context, id string, version int) (*GameSystemVersion, error) {
+func SetCurrentVersion(c context.Context, id string, version int, actingUserID string) (*GameSystemVersion, error) {
 	meta, err := GetMeta(c, id)
 	if err != nil {
 		return nil, err
@@ -440,6 +484,8 @@ func SetCurrentVersion(c context.Context, id string, version int) (*GameSystemVe
 	if meta == nil {
 		return nil, nil
 	}
+	id = meta.ID // normalize a system_id slug to the canonical _id
+
 	target, err := GetVersion(c, id, version)
 	if err != nil {
 		return nil, err
@@ -456,7 +502,7 @@ func SetCurrentVersion(c context.Context, id string, version int) (*GameSystemVe
 	if err := setVersionState(c, id, version, bson.D{{Key: "state", Value: string(VersionStateLive)}}); err != nil {
 		return nil, err
 	}
-	if err := setMetaCurrentVersion(c, id, version); err != nil {
+	if err := setMetaCurrentVersion(c, id, version, actingUserID); err != nil {
 		return nil, err
 	}
 	target.State = VersionStateLive
