@@ -15,3 +15,12 @@ type GameSystemVersion struct {
 	Tags             []modelcore.Tag `bson:"tags" json:"tags"`
 	VersionLifecycle `bson:",inline"`
 }
+
+// GameSystemView is the flattened current-view a caller gets from GET /systems(/:id): the
+// current version's fields plus the stable record's platform audit block (created/updated/deleted)
+// carried through from EntityMeta. The version's own submission/review trail (VersionLifecycle)
+// is distinct from and unaffected by these.
+type GameSystemView struct {
+	GameSystemVersion   `bson:",inline"`
+	modelcore.Auditable `bson:",inline"`
+}

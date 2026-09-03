@@ -165,7 +165,7 @@ func patchGameSystem(c *gin.Context) {
 		return
 	}
 
-	updated := *existing
+	updated := existing.GameSystemVersion
 	hasKnownField := false
 	for field, raw := range req {
 		if len(raw) == 0 || string(raw) == "null" {
