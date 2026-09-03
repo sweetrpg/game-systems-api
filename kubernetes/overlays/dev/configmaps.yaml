@@ -17,6 +17,9 @@ data:
   DB_OPTS: retryWrites=true&w=majority
   OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo-distributor.observability.svc.cluster.local:4318/
   AUTH_API_URL: http://api-v1.sweetrpg-auth.svc.cluster.local:8000
+  # USERS_API_URL resolves a verified subject to its canonical users._id for the audit fields
+  # (created_by/updated_by). Internal call, pinned to api-v1 per docs/deployment-conventions.md.
+  USERS_API_URL: http://api-v1.sweetrpg-users.svc.cluster.local:8000
   # Game-system change-event publishing. Fails open: if NATS is unreachable the mutation still
   # succeeds. NATS_USER/NATS_PASSWORD come from the api-nats secret (externalsecret-nats.yaml).
   NATS_URL: nats://nats.nats-system.svc.cluster.local:4222

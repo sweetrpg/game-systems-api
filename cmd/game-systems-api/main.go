@@ -39,7 +39,7 @@ func main() {
 		logging.Logger.Error("Error while ensuring game system versioning indexes", "error", err.Error())
 	}
 
-	authzClient := authz.NewClient(util.GetEnv(constants.AUTH_API_URL, ""))
+	authzClient := authz.NewClient(util.GetEnv(constants.AUTH_API_URL, ""), util.GetEnv(constants.USERS_API_URL, ""))
 
 	var systemPublisher events.SystemPublisher
 	if pub, err := events.NewPublisher(context.Background()); err != nil {

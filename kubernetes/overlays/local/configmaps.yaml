@@ -13,3 +13,4 @@ data:
   DB_NAME: sweetrpg-game-systems
   DB_OPTS: ""
   AUTH_API_URL: http://api-v1.sweetrpg-auth.svc.cluster.local:8000
+  USERS_API_URL: http://api-v1.sweetrpg-users.svc.cluster.local:8000

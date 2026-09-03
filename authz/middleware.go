@@ -8,10 +8,11 @@ import (
 	"github.com/sweetrpg/common.go/logging"
 )
 
-// Gin context keys set by RequireAnyRole; read via Roles/Subject.
+// Gin context keys set by RequireAnyRole; read via Roles/Subject/Viewer.
 const (
 	rolesContextKey   = "authz.roles"
 	subjectContextKey = "authz.subject"
+	viewerContextKey  = "authz.viewer"
 )
 
 // RequireAnyRole returns Gin middleware that verifies the caller's bearer token against
@@ -50,10 +51,36 @@ func RequireAnyRole(client *Client, service string, allowedRoles ...string) gin.
 			return
 		}
 
+		// Resolve the verified subject to its canonical users._id so writes stamp the platform
+		// audit fields with a canonical actor (PADR-0001), not the raw Auth0 subject. A
+		// role-holding caller has logged in and is provisioned; an unresolvable id means
+		// users-api is unreachable, and a write that can't be attributed must not proceed.
+		viewer := client.ResolveUserID(c.Request.Context(), token)
+		if viewer == "" {
+			logging.Logger.Error("could not resolve caller to a canonical user id", "sub", result.Sub)
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, apiv.ErrorVO{
+				Error:   "user_resolution_unavailable",
+				Message: "Unable to resolve the calling user",
+			})
+			return
+		}
+
 		c.Set(rolesContextKey, result.Roles)
 		c.Set(subjectContextKey, result.Sub)
+		c.Set(viewerContextKey, viewer)
 		c.Next()
 	}
+}
+
+// Viewer returns the caller's canonical users._id stashed in the Gin context by RequireAnyRole.
+// Empty only on a route that did not pass through RequireAnyRole.
+func Viewer(c *gin.Context) string {
+	if v, ok := c.Get(viewerContextKey); ok {
+		if id, ok := v.(string); ok {
+			return id
+		}
+	}
+	return ""
 }
 
 // Roles returns the verified roles stashed in the Gin context by RequireAnyRole.
