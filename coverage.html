@@ -55,25 +55,27 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/sweetrpg/game-systems-api/authz/client.go (0.0%)</option>
+				<option value="file0">github.com/sweetrpg/game-systems-api/authz/client.go (71.1%)</option>
 				
-				<option value="file1">github.com/sweetrpg/game-systems-api/authz/middleware.go (0.0%)</option>
+				<option value="file1">github.com/sweetrpg/game-systems-api/authz/middleware.go (52.7%)</option>
 				
-				<option value="file2">github.com/sweetrpg/game-systems-api/cmd/game-systems-api/main.go (0.0%)</option>
+				<option value="file2">github.com/sweetrpg/game-systems-api/cmd/backfill-audit-fields/main.go (0.0%)</option>
 				
-				<option value="file3">github.com/sweetrpg/game-systems-api/cmd/migrate-system-ids/main.go (12.8%)</option>
+				<option value="file3">github.com/sweetrpg/game-systems-api/cmd/game-systems-api/main.go (0.0%)</option>
 				
-				<option value="file4">github.com/sweetrpg/game-systems-api/internal/events/envelope.go (85.7%)</option>
+				<option value="file4">github.com/sweetrpg/game-systems-api/cmd/migrate-system-ids/main.go (12.8%)</option>
 				
-				<option value="file5">github.com/sweetrpg/game-systems-api/internal/events/publisher.go (17.4%)</option>
+				<option value="file5">github.com/sweetrpg/game-systems-api/internal/events/envelope.go (85.7%)</option>
 				
-				<option value="file6">github.com/sweetrpg/game-systems-api/models/versioning.go (7.5%)</option>
+				<option value="file6">github.com/sweetrpg/game-systems-api/internal/events/publisher.go (17.4%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-systems-api/server/game_systems.go (35.6%)</option>
+				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (7.0%)</option>
 				
-				<option value="file8">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
+				<option value="file8">github.com/sweetrpg/game-systems-api/server/game_systems.go (36.1%)</option>
 				
-				<option value="file9">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
+				<option value="file9">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
+				
+				<option value="file10">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -139,18 +141,23 @@ type InvalidTokenError struct{}
 
 func (InvalidTokenError) Error() string <span class="cov0" title="0">{ return "authz: invalid or missing token" }</span>
 
-// Client calls auth-api's /authz/check endpoint.
+// Client calls auth-api's /authz/check endpoint (identity + roles) and users-api's /profile
+// endpoint (resolving a verified subject to its canonical users._id).
 type Client struct {
-        baseURL string
-        http    *http.Client
+        baseURL      string
+        usersBaseURL string
+        http         *http.Client
 }
 
-// NewClient builds a Client against auth-api's base URL. An empty baseURL is accepted so the
-// service can still start when AUTH_API_URL isn't configured; every Check call will then fail
-// with a transport error, which RequireAnyRole surfaces as a 503.
-func NewClient(baseURL string) *Client <span class="cov0" title="0">{
+// NewClient builds a Client against auth-api's base URL and users-api's base URL. An empty
+// authBaseURL is accepted so the service can still start when AUTH_API_URL isn't configured;
+// every Check call then fails with a transport error, which RequireAnyRole surfaces as a 503.
+// An empty usersBaseURL makes ResolveUserID always return "" - RequireAnyRole then rejects
+// writes it cannot attribute rather than stamping an empty actor.
+func NewClient(authBaseURL, usersBaseURL string) *Client <span class="cov10" title="3">{
         return &amp;Client{
-                baseURL: baseURL,
+                baseURL:      authBaseURL,
+                usersBaseURL: usersBaseURL,
                 http: &amp;http.Client{
                         Timeout:   5 * time.Second,
                         Transport: otelhttp.NewTransport(http.DefaultTransport),
@@ -158,40 +165,80 @@ func NewClient(baseURL string) *Client <span class="cov0" title="0">{
         }
 }</span>
 
+// profileResponse is the slice of users-api's /profile response this service reads.
+type profileResponse struct {
+        UserID string `json:"user_id"`
+}
+
+// ResolveUserID exchanges a verified bearer token for the caller's canonical users._id by
+// calling users-api's GET /profile. Returns "" when the token is missing, users-api is
+// unconfigured or unavailable, or the subject has no provisioned profile (HTTP 404/401).
+func (c *Client) ResolveUserID(ctx context.Context, token string) string <span class="cov10" title="3">{
+        if c.usersBaseURL == "" || token == "" </span><span class="cov1" title="1">{
+                return ""
+        }</span>
+
+        <span class="cov6" title="2">req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.usersBaseURL+"/profile", nil)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Debug("users-api resolve: build request", "error", err.Error())
+                return ""
+        }</span>
+        <span class="cov6" title="2">req.Header.Set("Authorization", "Bearer "+token)
+
+        resp, err := c.http.Do(req)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Debug("users-api resolve: request failed", "error", err.Error())
+                return ""
+        }</span>
+        <span class="cov6" title="2">defer func() </span><span class="cov6" title="2">{ _ = resp.Body.Close() }</span>()
+
+        <span class="cov6" title="2">if resp.StatusCode != http.StatusOK </span><span class="cov1" title="1">{
+                logging.Logger.Debug("users-api resolve: unexpected status", "status", resp.StatusCode)
+                return ""
+        }</span>
+
+        <span class="cov1" title="1">var out profileResponse
+        if err := json.NewDecoder(resp.Body).Decode(&amp;out); err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Debug("users-api resolve: decode response", "error", err.Error())
+                return ""
+        }</span>
+        <span class="cov1" title="1">return out.UserID</span>
+}
+
 // Check verifies token against auth-api and returns the caller's allowed/roles/subject for the
 // given service name. Returns InvalidTokenError if auth-api rejects the token itself.
-func (c *Client) Check(ctx context.Context, token, service string) (*CheckResponse, error) <span class="cov0" title="0">{
+func (c *Client) Check(ctx context.Context, token, service string) (*CheckResponse, error) <span class="cov10" title="3">{
         body, err := json.Marshal(map[string]string{"service": service})
         if err != nil </span><span class="cov0" title="0">{
                 return nil, fmt.Errorf("authz: marshal request: %w", err)
         }</span>
 
-        <span class="cov0" title="0">req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/authz/check", bytes.NewReader(body))
+        <span class="cov10" title="3">req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/authz/check", bytes.NewReader(body))
         if err != nil </span><span class="cov0" title="0">{
                 return nil, fmt.Errorf("authz: build request: %w", err)
         }</span>
-        <span class="cov0" title="0">req.Header.Set("Content-Type", "application/json")
+        <span class="cov10" title="3">req.Header.Set("Content-Type", "application/json")
         req.Header.Set("Authorization", "Bearer "+token)
 
         resp, err := c.http.Do(req)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, fmt.Errorf("authz: request failed: %w", err)
         }</span>
-        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{ _ = resp.Body.Close() }</span>()
+        <span class="cov10" title="3">defer func() </span><span class="cov10" title="3">{ _ = resp.Body.Close() }</span>()
 
-        <span class="cov0" title="0">if resp.StatusCode == http.StatusUnauthorized </span><span class="cov0" title="0">{
+        <span class="cov10" title="3">if resp.StatusCode == http.StatusUnauthorized </span><span class="cov0" title="0">{
                 return nil, InvalidTokenError{}
         }</span>
-        <span class="cov0" title="0">if resp.StatusCode != http.StatusOK </span><span class="cov0" title="0">{
+        <span class="cov10" title="3">if resp.StatusCode != http.StatusOK </span><span class="cov0" title="0">{
                 return nil, fmt.Errorf("authz: unexpected status %d from auth-api", resp.StatusCode)
         }</span>
 
-        <span class="cov0" title="0">var out CheckResponse
+        <span class="cov10" title="3">var out CheckResponse
         if err := json.NewDecoder(resp.Body).Decode(&amp;out); err != nil </span><span class="cov0" title="0">{
                 return nil, fmt.Errorf("authz: decode response: %w", err)
         }</span>
 
-        <span class="cov0" title="0">logging.Logger.Debug("authz check", "service", service, "allowed", out.Allowed)
+        <span class="cov10" title="3">logging.Logger.Debug("authz check", "service", service, "allowed", out.Allowed)
         return &amp;out, nil</span>
 }
 </pre>
@@ -206,25 +253,26 @@ import (
         "github.com/sweetrpg/common.go/logging"
 )
 
-// Gin context keys set by RequireAnyRole; read via Roles/Subject.
+// Gin context keys set by RequireAnyRole; read via Roles/Subject/Viewer.
 const (
         rolesContextKey   = "authz.roles"
         subjectContextKey = "authz.subject"
+        viewerContextKey  = "authz.viewer"
 )
 
 // RequireAnyRole returns Gin middleware that verifies the caller's bearer token against
 // auth-api's /authz/check for the given service name, then requires the caller hold at least
 // one of allowedRoles. On success, the verified roles and subject are stashed in the Gin
 // context (read via Roles(c) / Subject(c)) for the handler to use.
-func RequireAnyRole(client *Client, service string, allowedRoles ...string) gin.HandlerFunc <span class="cov0" title="0">{
-        return func(c *gin.Context) </span><span class="cov0" title="0">{
+func RequireAnyRole(client *Client, service string, allowedRoles ...string) gin.HandlerFunc <span class="cov10" title="3">{
+        return func(c *gin.Context) </span><span class="cov10" title="3">{
                 token := bearerToken(c)
                 if token == "" </span><span class="cov0" title="0">{
                         unauthorized(c)
                         return
                 }</span>
 
-                <span class="cov0" title="0">result, err := client.Check(c.Request.Context(), token, service)
+                <span class="cov10" title="3">result, err := client.Check(c.Request.Context(), token, service)
                 if err != nil </span><span class="cov0" title="0">{
                         if _, ok := err.(InvalidTokenError); ok </span><span class="cov0" title="0">{
                                 unauthorized(c)
@@ -238,20 +286,46 @@ func RequireAnyRole(client *Client, service string, allowedRoles ...string) gin.
                         return</span>
                 }
 
-                <span class="cov0" title="0">if !result.Allowed </span><span class="cov0" title="0">{
+                <span class="cov10" title="3">if !result.Allowed </span><span class="cov0" title="0">{
                         forbidden(c)
                         return
                 }</span>
 
-                <span class="cov0" title="0">if !hasAnyRole(result.Roles, allowedRoles) </span><span class="cov0" title="0">{
+                <span class="cov10" title="3">if !hasAnyRole(result.Roles, allowedRoles) </span><span class="cov0" title="0">{
                         forbidden(c)
                         return
                 }</span>
 
-                <span class="cov0" title="0">c.Set(rolesContextKey, result.Roles)
+                // Resolve the verified subject to its canonical users._id so writes stamp the platform
+                // audit fields with a canonical actor (PADR-0001), not the raw Auth0 subject. A
+                // role-holding caller has logged in and is provisioned; an unresolvable id means
+                // users-api is unreachable, and a write that can't be attributed must not proceed.
+                <span class="cov10" title="3">viewer := client.ResolveUserID(c.Request.Context(), token)
+                if viewer == "" </span><span class="cov6" title="2">{
+                        logging.Logger.Error("could not resolve caller to a canonical user id", "sub", result.Sub)
+                        c.AbortWithStatusJSON(http.StatusServiceUnavailable, apiv.ErrorVO{
+                                Error:   "user_resolution_unavailable",
+                                Message: "Unable to resolve the calling user",
+                        })
+                        return
+                }</span>
+
+                <span class="cov1" title="1">c.Set(rolesContextKey, result.Roles)
                 c.Set(subjectContextKey, result.Sub)
+                c.Set(viewerContextKey, viewer)
                 c.Next()</span>
         }
+}
+
+// Viewer returns the caller's canonical users._id stashed in the Gin context by RequireAnyRole.
+// Empty only on a route that did not pass through RequireAnyRole.
+func Viewer(c *gin.Context) string <span class="cov1" title="1">{
+        if v, ok := c.Get(viewerContextKey); ok </span><span class="cov1" title="1">{
+                if id, ok := v.(string); ok </span><span class="cov1" title="1">{
+                        return id
+                }</span>
+        }
+        <span class="cov0" title="0">return ""</span>
 }
 
 // Roles returns the verified roles stashed in the Gin context by RequireAnyRole.
@@ -275,31 +349,31 @@ func Subject(c *gin.Context) string <span class="cov0" title="0">{
 }
 
 // HasRole reports whether roles contains want.
-func HasRole(roles []string, want string) bool <span class="cov0" title="0">{
-        for _, r := range roles </span><span class="cov0" title="0">{
-                if r == want </span><span class="cov0" title="0">{
+func HasRole(roles []string, want string) bool <span class="cov10" title="3">{
+        for _, r := range roles </span><span class="cov10" title="3">{
+                if r == want </span><span class="cov10" title="3">{
                         return true
                 }</span>
         }
         <span class="cov0" title="0">return false</span>
 }
 
-func hasAnyRole(have []string, want []string) bool <span class="cov0" title="0">{
-        for _, w := range want </span><span class="cov0" title="0">{
-                if HasRole(have, w) </span><span class="cov0" title="0">{
+func hasAnyRole(have []string, want []string) bool <span class="cov10" title="3">{
+        for _, w := range want </span><span class="cov10" title="3">{
+                if HasRole(have, w) </span><span class="cov10" title="3">{
                         return true
                 }</span>
         }
         <span class="cov0" title="0">return false</span>
 }
 
-func bearerToken(c *gin.Context) string <span class="cov0" title="0">{
+func bearerToken(c *gin.Context) string <span class="cov10" title="3">{
         const prefix = "Bearer "
         auth := c.GetHeader("Authorization")
         if len(auth) &lt;= len(prefix) || auth[:len(prefix)] != prefix </span><span class="cov0" title="0">{
                 return ""
         }</span>
-        <span class="cov0" title="0">return auth[len(prefix):]</span>
+        <span class="cov10" title="3">return auth[len(prefix):]</span>
 }
 
 func unauthorized(c *gin.Context) <span class="cov0" title="0">{
@@ -317,7 +391,95 @@ func forbidden(c *gin.Context) <span class="cov0" title="0">{
 }</span>
 </pre>
 		
-		<pre class="file" id="file2" style="display: none">package main
+		<pre class="file" id="file2" style="display: none">// Command backfill-audit-fields populates the platform audit fields (PADR-0001) on
+// game_systems_meta records that predate the convention: updated_at / updated_by (mirrored from
+// created_at / created_by), leaving deleted_at / deleted_by null. Version records are unchanged -
+// their submission/review trail (VersionLifecycle) is their audit record.
+//
+// Idempotent - a record that already has updated_at is skipped. Dry run by default.
+//
+//        go run ./cmd/backfill-audit-fields          # report counts, write nothing
+//        go run ./cmd/backfill-audit-fields -apply   # perform the writes
+package main
+
+import (
+        "context"
+        "flag"
+        "time"
+
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/mongodb.go/database"
+        "go.mongodb.org/mongo-driver/bson"
+)
+
+const metaCollection = "game_systems_meta"
+
+// metaAudit is the subset of a meta record this backfill reads.
+type metaAudit struct {
+        ID        string     `bson:"_id"`
+        CreatedAt time.Time  `bson:"created_at"`
+        CreatedBy string     `bson:"created_by"`
+        UpdatedAt *time.Time `bson:"updated_at"`
+}
+
+func main() <span class="cov0" title="0">{
+        apply := flag.Bool("apply", false, "perform writes (default: dry run)")
+        flag.Parse()
+
+        logging.Init()
+        c := context.Background()
+        database.SetupDatabase()
+        defer database.TeardownDatabase()
+
+        mode := "DRY RUN"
+        if *apply </span><span class="cov0" title="0">{
+                mode = "APPLY"
+        }</span>
+
+        // Idempotency guard: updated_at missing or null.
+        <span class="cov0" title="0">filter := bson.D{{Key: "$or", Value: bson.A{
+                bson.D{{Key: "updated_at", Value: bson.D{{Key: "$exists", Value: false}}}},
+                bson.D{{Key: "updated_at", Value: nil}},
+        }}}
+
+        metas, err := database.Query[metaAudit](metaCollection, filter, nil, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("failed to list meta records", "error", err.Error())
+                return
+        }</span>
+
+        <span class="cov0" title="0">var updated int
+        for _, m := range metas </span><span class="cov0" title="0">{
+                createdAt := m.CreatedAt
+                if createdAt.IsZero() </span><span class="cov0" title="0">{
+                        createdAt = time.Now().UTC()
+                }</span>
+                <span class="cov0" title="0">set := bson.D{
+                        {Key: "updated_at", Value: createdAt},
+                        {Key: "updated_by", Value: m.CreatedBy},
+                }
+                if m.CreatedAt.IsZero() </span><span class="cov0" title="0">{
+                        set = append(set, bson.E{Key: "created_at", Value: createdAt})
+                }</span>
+                <span class="cov0" title="0">if !*apply </span><span class="cov0" title="0">{
+                        updated++
+                        continue</span>
+                }
+                <span class="cov0" title="0">res, err := database.Db.Collection(metaCollection).UpdateOne(c,
+                        bson.D{{Key: "_id", Value: m.ID}},
+                        bson.D{{Key: "$set", Value: set}})
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Logger.Error("failed to update meta record", "record", m.ID, "error", err.Error())
+                        return
+                }</span>
+                <span class="cov0" title="0">updated += int(res.ModifiedCount)</span>
+        }
+
+        <span class="cov0" title="0">logging.Logger.Info("backfill-audit-fields done", "mode", mode, "meta_records_stamped", updated)</span>
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package main
 
 import (
         "context"
@@ -358,7 +520,7 @@ func main() <span class="cov0" title="0">{
                 logging.Logger.Error("Error while ensuring game system versioning indexes", "error", err.Error())
         }</span>
 
-        <span class="cov0" title="0">authzClient := authz.NewClient(util.GetEnv(constants.AUTH_API_URL, ""))
+        <span class="cov0" title="0">authzClient := authz.NewClient(util.GetEnv(constants.AUTH_API_URL, ""), util.GetEnv(constants.USERS_API_URL, ""))
 
         var systemPublisher events.SystemPublisher
         if pub, err := events.NewPublisher(context.Background()); err != nil </span><span class="cov0" title="0">{
@@ -374,7 +536,7 @@ func main() <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file3" style="display: none">package main
+		<pre class="file" id="file4" style="display: none">package main
 
 import (
         "context"
@@ -492,7 +654,7 @@ func slugify(s string) string <span class="cov10" title="4">{
 }
 </pre>
 		
-		<pre class="file" id="file4" style="display: none">package events
+		<pre class="file" id="file5" style="display: none">package events
 
 import (
         "encoding/json"
@@ -544,7 +706,7 @@ func NewEnvelope(eventID, entityType, entityID, action string, revision int, dat
 }
 </pre>
 		
-		<pre class="file" id="file5" style="display: none">package events
+		<pre class="file" id="file6" style="display: none">package events
 
 import (
         "context"
@@ -688,7 +850,7 @@ func buildPublish(e *Envelope) (subject string, body []byte, msgID string, err e
 }
 </pre>
 		
-		<pre class="file" id="file6" style="display: none">package models
+		<pre class="file" id="file7" style="display: none">package models
 
 import (
         "context"
@@ -747,13 +909,20 @@ func EnsureIndexes(c context.Context) error <span class="cov0" title="0">{
         <span class="cov0" title="0">return nil</span>
 }
 
-// GetMeta fetches a game system's meta record, matching id against either the document `_id`
-// or the `system_id` slug in a single query.
+// notDeletedMeta excludes soft-deleted meta records (deleted_at absent or null) - the platform
+// audit-fields read filter (PADR-0001).
+var notDeletedMeta = bson.D{{Key: "deleted_at", Value: nil}}
+
+// GetMeta fetches a live (non-soft-deleted) game system's meta record, matching id against
+// either the document `_id` or the `system_id` slug.
 func GetMeta(c context.Context, id string) (*EntityMeta, error) <span class="cov0" title="0">{
-        filter := bson.D{{Key: "$or", Value: bson.A{
-                bson.D{{Key: "_id", Value: id}},
-                bson.D{{Key: "system_id", Value: id}},
-        }}}
+        filter := bson.D{
+                {Key: "deleted_at", Value: nil},
+                {Key: "$or", Value: bson.A{
+                        bson.D{{Key: "_id", Value: id}},
+                        bson.D{{Key: "system_id", Value: id}},
+                }},
+        }
         results, err := database.Query[EntityMeta](metaCollection, filter, nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
@@ -762,6 +931,19 @@ func GetMeta(c context.Context, id string) (*EntityMeta, error) <span class="cov
                 return nil, nil
         }</span>
         <span class="cov0" title="0">return results[0], nil</span>
+}
+
+// liveMetaIDs returns the `_id`s of every non-soft-deleted meta record.
+func liveMetaIDs(c context.Context) ([]string, error) <span class="cov0" title="0">{
+        metas, err := database.Query[EntityMeta](metaCollection, notDeletedMeta, nil, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">ids := make([]string, 0, len(metas))
+        for _, m := range metas </span><span class="cov0" title="0">{
+                ids = append(ids, m.ID)
+        }</span>
+        <span class="cov0" title="0">return ids, nil</span>
 }
 
 // GetVersion fetches one game system version's full field snapshot.
@@ -791,12 +973,23 @@ func Get(c context.Context, id string) (*GameSystemVersion, error) <span class="
 }
 
 // List returns every live game system's current version - the flattened view GET /systems
-// returns.
+// returns. Soft-deleted systems (deleted_at set on their meta record) are excluded.
 func List(c context.Context) ([]*GameSystemVersion, error) <span class="cov0" title="0">{
-        filter := bson.D{{Key: "state", Value: string(VersionStateLive)}}
+        ids, err := liveMetaIDs(c)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">values := make(bson.A, len(ids))
+        for i, id := range ids </span><span class="cov0" title="0">{
+                values[i] = id
+        }</span>
+        <span class="cov0" title="0">filter := bson.D{
+                {Key: "state", Value: string(VersionStateLive)},
+                {Key: "record_id", Value: bson.D{{Key: "$in", Value: values}}},
+        }
         sortOrder := bson.D{{Key: "name", Value: 1}}
-        return database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
-}</span>
+        return database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)</span>
+}
 
 // ListVersions returns every version of a game system, newest first.
 func ListVersions(c context.Context, id string) ([]*GameSystemVersion, error) <span class="cov0" title="0">{
@@ -815,11 +1008,15 @@ func archiveVersion(c context.Context, recordID string, version int) error <span
         return setVersionState(c, recordID, version, bson.D{{Key: "state", Value: string(VersionStateArchived)}})
 }</span>
 
-func setMetaCurrentVersion(c context.Context, recordID string, version int) error <span class="cov0" title="0">{
+func setMetaCurrentVersion(c context.Context, recordID string, version int, actingUserID string) error <span class="cov0" title="0">{
         _, err := database.Db.Collection(metaCollection).UpdateOne(
                 c,
                 bson.D{{Key: "_id", Value: recordID}},
-                bson.D{{Key: "$set", Value: bson.D{{Key: "current_version", Value: version}}}},
+                bson.D{{Key: "$set", Value: bson.D{
+                        {Key: "current_version", Value: version},
+                        {Key: "updated_at", Value: time.Now()},
+                        {Key: "updated_by", Value: actingUserID},
+                }}},
         )
         return err
 }</span>
@@ -841,7 +1038,8 @@ func nextVersionNumber(c context.Context, recordID string) (int, error) <span cl
 func Create(c context.Context, gs *GameSystemVersion, systemID string, createdBy string) (*string, error) <span class="cov0" title="0">{
         now := time.Now()
         metaID := primitive.NewObjectID().Hex()
-        meta := EntityMeta{ID: metaID, SystemID: systemID, CurrentVersion: 1, CreatedAt: now, CreatedBy: createdBy}
+        meta := EntityMeta{ID: metaID, SystemID: systemID, CurrentVersion: 1}
+        modelcore.StampCreate(&amp;meta.Auditable, createdBy, now)
         if _, err := database.Insert[EntityMeta](metaCollection, meta); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
@@ -871,8 +1069,11 @@ func CreateVersion(c context.Context, id string, gs *GameSystemVersion, state Ve
         <span class="cov0" title="0">if meta == nil </span><span class="cov0" title="0">{
                 return nil, nil
         }</span>
+        // id may have arrived as the system_id slug; every version/meta write below keys on the
+        // canonical _id, which is also what record_id holds.
+        <span class="cov0" title="0">id = meta.ID
 
-        <span class="cov0" title="0">nextVersion, err := nextVersionNumber(c, id)
+        nextVersion, err := nextVersionNumber(c, id)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
@@ -894,7 +1095,7 @@ func CreateVersion(c context.Context, id string, gs *GameSystemVersion, state Ve
                 if err := archiveVersion(c, id, meta.CurrentVersion); err != nil </span><span class="cov0" title="0">{
                         return nil, err
                 }</span>
-                <span class="cov0" title="0">if err := setMetaCurrentVersion(c, id, nextVersion); err != nil </span><span class="cov0" title="0">{
+                <span class="cov0" title="0">if err := setMetaCurrentVersion(c, id, nextVersion, submittedBy); err != nil </span><span class="cov0" title="0">{
                         return nil, err
                 }</span>
         }
@@ -975,8 +1176,9 @@ func AcceptVersion(c context.Context, id string, version int, selectedFields []s
         <span class="cov0" title="0">if meta == nil </span><span class="cov0" title="0">{
                 return nil, nil, fmt.Errorf("game system %s: meta record not found", id)
         }</span>
+        <span class="cov0" title="0">id = meta.ID // normalize a system_id slug to the canonical _id
 
-        <span class="cov0" title="0">current, err := GetVersion(c, id, meta.CurrentVersion)
+        current, err := GetVersion(c, id, meta.CurrentVersion)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, nil, err
         }</span>
@@ -998,7 +1200,7 @@ func AcceptVersion(c context.Context, id string, version int, selectedFields []s
                 }); err != nil </span><span class="cov0" title="0">{
                         return nil, nil, err
                 }</span>
-                <span class="cov0" title="0">if err := setMetaCurrentVersion(c, id, version); err != nil </span><span class="cov0" title="0">{
+                <span class="cov0" title="0">if err := setMetaCurrentVersion(c, id, version, reviewedBy); err != nil </span><span class="cov0" title="0">{
                         return nil, nil, err
                 }</span>
                 <span class="cov0" title="0">submitted.State = VersionStateLive
@@ -1062,7 +1264,7 @@ func AcceptVersion(c context.Context, id string, version int, selectedFields []s
         <span class="cov0" title="0">if err := archiveVersion(c, id, meta.CurrentVersion); err != nil </span><span class="cov0" title="0">{
                 return nil, nil, err
         }</span>
-        <span class="cov0" title="0">if err := setMetaCurrentVersion(c, id, nextVersion); err != nil </span><span class="cov0" title="0">{
+        <span class="cov0" title="0">if err := setMetaCurrentVersion(c, id, nextVersion, reviewedBy); err != nil </span><span class="cov0" title="0">{
                 return nil, nil, err
         }</span>
         <span class="cov0" title="0">if err := setVersionState(c, id, version, bson.D{
@@ -1122,7 +1324,7 @@ func RetractVersion(c context.Context, id string, version int, submitterID strin
 }
 
 // SetCurrentVersion rolls a game system back (or forward) to an arbitrary existing version.
-func SetCurrentVersion(c context.Context, id string, version int) (*GameSystemVersion, error) <span class="cov0" title="0">{
+func SetCurrentVersion(c context.Context, id string, version int, actingUserID string) (*GameSystemVersion, error) <span class="cov0" title="0">{
         meta, err := GetMeta(c, id)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
@@ -1130,7 +1332,9 @@ func SetCurrentVersion(c context.Context, id string, version int) (*GameSystemVe
         <span class="cov0" title="0">if meta == nil </span><span class="cov0" title="0">{
                 return nil, nil
         }</span>
-        <span class="cov0" title="0">target, err := GetVersion(c, id, version)
+        <span class="cov0" title="0">id = meta.ID // normalize a system_id slug to the canonical _id
+
+        target, err := GetVersion(c, id, version)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
@@ -1146,7 +1350,7 @@ func SetCurrentVersion(c context.Context, id string, version int) (*GameSystemVe
         <span class="cov0" title="0">if err := setVersionState(c, id, version, bson.D{{Key: "state", Value: string(VersionStateLive)}}); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov0" title="0">if err := setMetaCurrentVersion(c, id, version); err != nil </span><span class="cov0" title="0">{
+        <span class="cov0" title="0">if err := setMetaCurrentVersion(c, id, version, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov0" title="0">target.State = VersionStateLive
@@ -1154,7 +1358,7 @@ func SetCurrentVersion(c context.Context, id string, version int) (*GameSystemVe
 }
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">package server
+		<pre class="file" id="file8" style="display: none">package server
 
 import (
         "encoding/json"
@@ -1178,21 +1382,21 @@ var systemEvents events.SystemPublisher
 // publishSystemChange loads the system's authoritative current version and emits one
 // gamesystems.events.system.&lt;action&gt; event. Fail-open: any problem loading the system is logged
 // and the mutation response is unaffected (the publisher itself is already fail-open).
-func publishSystemChange(c *gin.Context, action, systemID string) <span class="cov4" title="2">{
+func publishSystemChange(c *gin.Context, action, systemID string) <span class="cov6" title="4">{
         if systemEvents == nil </span><span class="cov0" title="0">{
                 return
         }</span>
-        <span class="cov4" title="2">cur, err := models.Get(c.Request.Context(), systemID)
+        <span class="cov6" title="4">cur, err := models.Get(c.Request.Context(), systemID)
         if err != nil || cur == nil </span><span class="cov0" title="0">{
                 logging.Logger.Warn("skipped system change event: current version unavailable",
                         "system_id", systemID, "action", action, "error", err)
                 return
         }</span>
-        <span class="cov4" title="2">data := map[string]any{"title": cur.Name}
+        <span class="cov6" title="4">data := map[string]any{"title": cur.Name}
         switch action </span>{
-        case "created":<span class="cov1" title="1">
+        case "created":<span class="cov3" title="2">
                 systemEvents.PublishSystemCreated(c.Request.Context(), systemID, cur.Version, data)</span>
-        case "updated":<span class="cov1" title="1">
+        case "updated":<span class="cov3" title="2">
                 systemEvents.PublishSystemUpdated(c.Request.Context(), systemID, cur.Version, data)</span>
         }
 }
@@ -1219,7 +1423,7 @@ type rejectVersionRequest struct {
         Note string `json:"note"`
 }
 
-func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov10" title="8">{
+func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov10" title="10">{
         logging.Logger.Info("Setting up game system endpoint handlers...")
 
         systemEvents = pub
@@ -1249,13 +1453,13 @@ func listGameSystems(c *gin.Context) <span class="cov1" title="1">{
         <span class="cov1" title="1">c.JSON(http.StatusOK, results)</span>
 }
 
-func getGameSystem(c *gin.Context) <span class="cov7" title="4">{
+func getGameSystem(c *gin.Context) <span class="cov6" title="4">{
         result, err := models.Get(c.Request.Context(), c.Param("id"))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov7" title="4">if result == nil </span><span class="cov1" title="1">{
+        <span class="cov6" title="4">if result == nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
@@ -1267,19 +1471,19 @@ type createGameSystemRequest struct {
         SystemID                 string `json:"system_id" binding:"required"`
 }
 
-func createGameSystem(c *gin.Context) <span class="cov5" title="3">{
+func createGameSystem(c *gin.Context) <span class="cov6" title="4">{
         var req createGameSystemRequest
         if err := c.ShouldBindJSON(&amp;req); err != nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: err.Error()})
                 return
         }</span>
-        <span class="cov4" title="2">if !models.ValidateSystemID(req.SystemID) </span><span class="cov0" title="0">{
+        <span class="cov5" title="3">if !models.ValidateSystemID(req.SystemID) </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "system_id must be a lowercase kebab-case slug"})
                 return
         }</span>
-        <span class="cov4" title="2">entity := req.GameSystemVersion
+        <span class="cov5" title="3">entity := req.GameSystemVersion
 
-        id, err := models.Create(c.Request.Context(), &amp;entity, req.SystemID, authz.Subject(c))
+        id, err := models.Create(c.Request.Context(), &amp;entity, req.SystemID, authz.Viewer(c))
         if err != nil </span><span class="cov1" title="1">{
                 if mongo.IsDuplicateKeyError(err) </span><span class="cov1" title="1">{
                         c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "system_id already in use"})
@@ -1288,21 +1492,21 @@ func createGameSystem(c *gin.Context) <span class="cov5" title="3">{
                 <span class="cov0" title="0">c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "create_failed", Message: err.Error()})
                 return</span>
         }
-        <span class="cov1" title="1">if id == nil </span><span class="cov0" title="0">{
+        <span class="cov3" title="2">if id == nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "create_failed", Message: "no id returned"})
                 return
         }</span>
 
-        <span class="cov1" title="1">result, err := models.Get(c.Request.Context(), *id)
+        <span class="cov3" title="2">result, err := models.Get(c.Request.Context(), *id)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov1" title="1">publishSystemChange(c, "created", *id)
+        <span class="cov3" title="2">publishSystemChange(c, "created", *id)
         c.JSON(http.StatusCreated, result)</span>
 }
 
-func patchGameSystem(c *gin.Context) <span class="cov4" title="2">{
+func patchGameSystem(c *gin.Context) <span class="cov5" title="3">{
         id := c.Param("id")
 
         var req map[string]json.RawMessage
@@ -1311,29 +1515,29 @@ func patchGameSystem(c *gin.Context) <span class="cov4" title="2">{
                 return
         }</span>
 
-        <span class="cov4" title="2">existing, err := models.Get(c.Request.Context(), id)
+        <span class="cov5" title="3">existing, err := models.Get(c.Request.Context(), id)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov4" title="2">if existing == nil </span><span class="cov0" title="0">{
+        <span class="cov5" title="3">if existing == nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
 
-        <span class="cov4" title="2">updated := *existing
+        <span class="cov5" title="3">updated := *existing
         hasKnownField := false
-        for field, raw := range req </span><span class="cov4" title="2">{
+        for field, raw := range req </span><span class="cov5" title="3">{
                 if len(raw) == 0 || string(raw) == "null" </span><span class="cov0" title="0">{
                         continue</span>
                 }
-                <span class="cov4" title="2">switch field </span>{
-                case "name":<span class="cov4" title="2">
+                <span class="cov5" title="3">switch field </span>{
+                case "name":<span class="cov3" title="2">
                         if err := json.Unmarshal(raw, &amp;updated.Name); err != nil </span><span class="cov0" title="0">{
                                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: field + ": " + err.Error()})
                                 return
                         }</span>
-                case "edition":<span class="cov0" title="0">
+                case "edition":<span class="cov1" title="1">
                         if err := json.Unmarshal(raw, &amp;updated.Edition); err != nil </span><span class="cov0" title="0">{
                                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: field + ": " + err.Error()})
                                 return
@@ -1356,42 +1560,42 @@ func patchGameSystem(c *gin.Context) <span class="cov4" title="2">{
                 default:<span class="cov0" title="0">
                         continue</span>
                 }
-                <span class="cov4" title="2">hasKnownField = true</span>
+                <span class="cov5" title="3">hasKnownField = true</span>
         }
-        <span class="cov4" title="2">if !hasKnownField </span><span class="cov0" title="0">{
+        <span class="cov5" title="3">if !hasKnownField </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "no recognized fields to change"})
                 return
         }</span>
 
-        <span class="cov4" title="2">roles := authz.Roles(c)
+        <span class="cov5" title="3">roles := authz.Roles(c)
         state := models.VersionStateSubmitted
-        if authz.HasRole(roles, authz.RoleAdmin) || authz.HasRole(roles, authz.RoleEditor) </span><span class="cov1" title="1">{
+        if authz.HasRole(roles, authz.RoleAdmin) || authz.HasRole(roles, authz.RoleEditor) </span><span class="cov3" title="2">{
                 state = models.VersionStateLive
         }</span>
 
-        <span class="cov4" title="2">version, err := models.CreateVersion(c.Request.Context(), id, &amp;updated, state, authz.Subject(c))
+        <span class="cov5" title="3">version, err := models.CreateVersion(c.Request.Context(), id, &amp;updated, state, authz.Viewer(c))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "update_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov4" title="2">if version == nil </span><span class="cov0" title="0">{
+        <span class="cov5" title="3">if version == nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
 
-        <span class="cov4" title="2">if state != models.VersionStateLive </span><span class="cov1" title="1">{
+        <span class="cov5" title="3">if state != models.VersionStateLive </span><span class="cov1" title="1">{
                 c.JSON(http.StatusAccepted, submittedVersionResponse{
                         Version: version.Version, State: string(version.State), Message: "Change submitted for review",
                 })
                 return
         }</span>
 
-        <span class="cov1" title="1">result, err := models.Get(c.Request.Context(), id)
+        <span class="cov3" title="2">result, err := models.Get(c.Request.Context(), id)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov1" title="1">publishSystemChange(c, "updated", id)
+        <span class="cov3" title="2">publishSystemChange(c, "updated", id)
         c.JSON(http.StatusOK, result)</span>
 }
 
@@ -1463,7 +1667,7 @@ func acceptGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
         if req.Fields != nil </span><span class="cov0" title="0">{
                 selectedFields = *req.Fields
         }</span>
-        <span class="cov0" title="0">accepted, conflicts, err := models.AcceptVersion(c.Request.Context(), id, version, selectedFields, authz.Subject(c), nil)
+        <span class="cov0" title="0">accepted, conflicts, err := models.AcceptVersion(c.Request.Context(), id, version, selectedFields, authz.Viewer(c), nil)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "accept_failed", Message: err.Error()})
                 return
@@ -1487,7 +1691,7 @@ func rejectGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
         if req.Note != "" </span><span class="cov0" title="0">{
                 note = &amp;req.Note
         }</span>
-        <span class="cov0" title="0">if err := models.RejectVersion(c.Request.Context(), id, version, authz.Subject(c), note); err != nil </span><span class="cov0" title="0">{
+        <span class="cov0" title="0">if err := models.RejectVersion(c.Request.Context(), id, version, authz.Viewer(c), note); err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "reject_failed", Message: err.Error()})
                 return
         }</span>
@@ -1500,7 +1704,7 @@ func retractGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
         if !ok </span><span class="cov0" title="0">{
                 return
         }</span>
-        <span class="cov0" title="0">retracted, err := models.RetractVersion(c.Request.Context(), id, version, authz.Subject(c))
+        <span class="cov0" title="0">retracted, err := models.RetractVersion(c.Request.Context(), id, version, authz.Viewer(c))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "retract_failed", Message: err.Error()})
                 return
@@ -1514,7 +1718,7 @@ func setCurrentGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
         if !ok </span><span class="cov0" title="0">{
                 return
         }</span>
-        <span class="cov0" title="0">result, err := models.SetCurrentVersion(c.Request.Context(), id, version)
+        <span class="cov0" title="0">result, err := models.SetCurrentVersion(c.Request.Context(), id, version, authz.Viewer(c))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "rollback_failed", Message: err.Error()})
                 return
@@ -1528,7 +1732,7 @@ func setCurrentGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file8" style="display: none">package server
+		<pre class="file" id="file9" style="display: none">package server
 
 import (
         "github.com/gin-gonic/gin"
@@ -1542,7 +1746,7 @@ func SetupHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPu
 }</span>
 </pre>
 		
-		<pre class="file" id="file9" style="display: none">package server
+		<pre class="file" id="file10" style="display: none">package server
 
 import (
         "net/http"
