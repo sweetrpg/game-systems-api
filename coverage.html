@@ -69,7 +69,7 @@
 				
 				<option value="file6">github.com/sweetrpg/game-systems-api/internal/events/publisher.go (17.4%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (7.0%)</option>
+				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (6.8%)</option>
 				
 				<option value="file8">github.com/sweetrpg/game-systems-api/server/game_systems.go (36.1%)</option>
 				
@@ -933,19 +933,6 @@ func GetMeta(c context.Context, id string) (*EntityMeta, error) <span class="cov
         <span class="cov0" title="0">return results[0], nil</span>
 }
 
-// liveMetaIDs returns the `_id`s of every non-soft-deleted meta record.
-func liveMetaIDs(c context.Context) ([]string, error) <span class="cov0" title="0">{
-        metas, err := database.Query[EntityMeta](metaCollection, notDeletedMeta, nil, nil, 0, 0)
-        if err != nil </span><span class="cov0" title="0">{
-                return nil, err
-        }</span>
-        <span class="cov0" title="0">ids := make([]string, 0, len(metas))
-        for _, m := range metas </span><span class="cov0" title="0">{
-                ids = append(ids, m.ID)
-        }</span>
-        <span class="cov0" title="0">return ids, nil</span>
-}
-
 // GetVersion fetches one game system version's full field snapshot.
 func GetVersion(c context.Context, recordID string, version int) (*GameSystemVersion, error) <span class="cov0" title="0">{
         filter := bson.D{{Key: "record_id", Value: recordID}, {Key: "version", Value: version}}
@@ -959,9 +946,9 @@ func GetVersion(c context.Context, recordID string, version int) (*GameSystemVer
         <span class="cov0" title="0">return results[0], nil</span>
 }
 
-// Get returns a game system's meta merged with its current version's data - the flattened
-// current view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
-func Get(c context.Context, id string) (*GameSystemVersion, error) <span class="cov0" title="0">{
+// Get returns a game system's current version flattened with its stable record's audit block -
+// the view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
+func Get(c context.Context, id string) (*GameSystemView, error) <span class="cov0" title="0">{
         meta, err := GetMeta(c, id)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
@@ -969,26 +956,43 @@ func Get(c context.Context, id string) (*GameSystemVersion, error) <span class="
         <span class="cov0" title="0">if meta == nil </span><span class="cov0" title="0">{
                 return nil, nil
         }</span>
-        <span class="cov0" title="0">return GetVersion(c, meta.ID, meta.CurrentVersion)</span>
+        <span class="cov0" title="0">version, err := GetVersion(c, meta.ID, meta.CurrentVersion)
+        if err != nil || version == nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return &amp;GameSystemView{GameSystemVersion: *version, Auditable: meta.Auditable}, nil</span>
 }
 
-// List returns every live game system's current version - the flattened view GET /systems
-// returns. Soft-deleted systems (deleted_at set on their meta record) are excluded.
-func List(c context.Context) ([]*GameSystemVersion, error) <span class="cov0" title="0">{
-        ids, err := liveMetaIDs(c)
+// List returns every live game system's current version, each flattened with its record's audit
+// block. Soft-deleted systems (deleted_at set on their meta record) are excluded.
+func List(c context.Context) ([]*GameSystemView, error) <span class="cov0" title="0">{
+        metas, err := database.Query[EntityMeta](metaCollection, notDeletedMeta, nil, nil, 0, 0)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov0" title="0">values := make(bson.A, len(ids))
-        for i, id := range ids </span><span class="cov0" title="0">{
-                values[i] = id
+        <span class="cov0" title="0">if len(metas) == 0 </span><span class="cov0" title="0">{
+                return []*GameSystemView{}, nil
+        }</span>
+        <span class="cov0" title="0">auditByRecordID := make(map[string]modelcore.Auditable, len(metas))
+        values := make(bson.A, len(metas))
+        for i, m := range metas </span><span class="cov0" title="0">{
+                auditByRecordID[m.ID] = m.Auditable
+                values[i] = m.ID
         }</span>
         <span class="cov0" title="0">filter := bson.D{
                 {Key: "state", Value: string(VersionStateLive)},
                 {Key: "record_id", Value: bson.D{{Key: "$in", Value: values}}},
         }
         sortOrder := bson.D{{Key: "name", Value: 1}}
-        return database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)</span>
+        versions, err := database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">views := make([]*GameSystemView, 0, len(versions))
+        for _, v := range versions </span><span class="cov0" title="0">{
+                views = append(views, &amp;GameSystemView{GameSystemVersion: *v, Auditable: auditByRecordID[v.RecordID]})
+        }</span>
+        <span class="cov0" title="0">return views, nil</span>
 }
 
 // ListVersions returns every version of a game system, newest first.
@@ -1423,7 +1427,7 @@ type rejectVersionRequest struct {
         Note string `json:"note"`
 }
 
-func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov10" title="10">{
+func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov10" title="11">{
         logging.Logger.Info("Setting up game system endpoint handlers...")
 
         systemEvents = pub
@@ -1453,17 +1457,17 @@ func listGameSystems(c *gin.Context) <span class="cov1" title="1">{
         <span class="cov1" title="1">c.JSON(http.StatusOK, results)</span>
 }
 
-func getGameSystem(c *gin.Context) <span class="cov6" title="4">{
+func getGameSystem(c *gin.Context) <span class="cov7" title="5">{
         result, err := models.Get(c.Request.Context(), c.Param("id"))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov6" title="4">if result == nil </span><span class="cov1" title="1">{
+        <span class="cov7" title="5">if result == nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
-        <span class="cov5" title="3">c.JSON(http.StatusOK, result)</span>
+        <span class="cov6" title="4">c.JSON(http.StatusOK, result)</span>
 }
 
 type createGameSystemRequest struct {
@@ -1525,7 +1529,7 @@ func patchGameSystem(c *gin.Context) <span class="cov5" title="3">{
                 return
         }</span>
 
-        <span class="cov5" title="3">updated := *existing
+        <span class="cov5" title="3">updated := existing.GameSystemVersion
         hasKnownField := false
         for field, raw := range req </span><span class="cov5" title="3">{
                 if len(raw) == 0 || string(raw) == "null" </span><span class="cov0" title="0">{
