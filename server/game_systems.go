@@ -123,7 +123,7 @@ func createGameSystem(c *gin.Context) {
 	}
 	entity := req.GameSystemVersion
 
-	id, err := models.Create(c.Request.Context(), &entity, req.SystemID, authz.Subject(c))
+	id, err := models.Create(c.Request.Context(), &entity, req.SystemID, authz.Viewer(c))
 	if err != nil {
 		if mongo.IsDuplicateKeyError(err) {
 			c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "system_id already in use"})
@@ -213,7 +213,7 @@ func patchGameSystem(c *gin.Context) {
 		state = models.VersionStateLive
 	}
 
-	version, err := models.CreateVersion(c.Request.Context(), id, &updated, state, authz.Subject(c))
+	version, err := models.CreateVersion(c.Request.Context(), id, &updated, state, authz.Viewer(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "update_failed", Message: err.Error()})
 		return
@@ -307,7 +307,7 @@ func acceptGameSystemVersion(c *gin.Context) {
 	if req.Fields != nil {
 		selectedFields = *req.Fields
 	}
-	accepted, conflicts, err := models.AcceptVersion(c.Request.Context(), id, version, selectedFields, authz.Subject(c), nil)
+	accepted, conflicts, err := models.AcceptVersion(c.Request.Context(), id, version, selectedFields, authz.Viewer(c), nil)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "accept_failed", Message: err.Error()})
 		return
@@ -331,7 +331,7 @@ func rejectGameSystemVersion(c *gin.Context) {
 	if req.Note != "" {
 		note = &req.Note
 	}
-	if err := models.RejectVersion(c.Request.Context(), id, version, authz.Subject(c), note); err != nil {
+	if err := models.RejectVersion(c.Request.Context(), id, version, authz.Viewer(c), note); err != nil {
 		c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "reject_failed", Message: err.Error()})
 		return
 	}
@@ -344,7 +344,7 @@ func retractGameSystemVersion(c *gin.Context) {
 	if !ok {
 		return
 	}
-	retracted, err := models.RetractVersion(c.Request.Context(), id, version, authz.Subject(c))
+	retracted, err := models.RetractVersion(c.Request.Context(), id, version, authz.Viewer(c))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "retract_failed", Message: err.Error()})
 		return
@@ -358,7 +358,7 @@ func setCurrentGameSystemVersion(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := models.SetCurrentVersion(c.Request.Context(), id, version)
+	result, err := models.SetCurrentVersion(c.Request.Context(), id, version, authz.Viewer(c))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "rollback_failed", Message: err.Error()})
 		return

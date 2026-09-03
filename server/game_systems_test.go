@@ -14,6 +14,7 @@ import (
 	"github.com/sweetrpg/common.go/logging"
 	"github.com/sweetrpg/game-systems-api/authz"
 	"github.com/sweetrpg/game-systems-api/models"
+	modelcore "github.com/sweetrpg/model-core.go/models"
 	"github.com/sweetrpg/mongodb.go/database"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
 	"go.mongodb.org/mongo-driver/bson"
@@ -100,14 +101,20 @@ func setupTestAs(t *testing.T, roles []string) (*gin.Engine, *fakePublisher) {
 		t.Fatalf("ensure indexes: %v", err)
 	}
 
+	// One stub server fakes both auth-api's /authz/check and users-api's /profile - the latter
+	// resolves the verified subject to a canonical users._id for the audit fields.
 	authzStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/profile" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"user_id": "test-user"})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(authz.CheckResponse{Allowed: true, Roles: roles, Sub: "test-user"})
 	}))
 	t.Cleanup(authzStub.Close)
 
 	pub := &fakePublisher{}
 	router := gin.New()
-	setupGameSystemHandlers(router, authz.NewClient(authzStub.URL), pub)
+	setupGameSystemHandlers(router, authz.NewClient(authzStub.URL, authzStub.URL), pub)
 
 	if err := seedGameSystem(t, "64b000000000000000000001", "numenera"); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -119,7 +126,8 @@ func seedGameSystem(t *testing.T, id, systemID string) error {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now()
-	meta := models.EntityMeta{ID: id, SystemID: systemID, CurrentVersion: 1, CreatedAt: now, CreatedBy: "seed"}
+	meta := models.EntityMeta{ID: id, SystemID: systemID, CurrentVersion: 1}
+	modelcore.StampCreate(&meta.Auditable, "seed", now)
 	if _, err := database.Db.Collection("game_systems_meta").InsertOne(ctx, meta); err != nil {
 		return err
 	}
