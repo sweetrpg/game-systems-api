@@ -49,6 +49,29 @@ func TestCreateGameSystem_StampsMetaAuditFields(t *testing.T) {
 	}
 }
 
+func TestGetGameSystem_ResponseCarriesMetaAuditBlock(t *testing.T) {
+	r, _ := setupTest(t)
+
+	_, body := getJSON(t, r, "/systems/numenera")
+
+	for _, key := range []string{"created_at", "created_by", "updated_at", "updated_by"} {
+		if _, ok := body[key]; !ok {
+			t.Errorf("GET /systems/:id response missing %q; body keys: %v", key, keysOf(body))
+		}
+	}
+	if by, _ := body["created_by"].(string); by != "seed" {
+		t.Errorf("created_by = %q, want the seeded \"seed\"", by)
+	}
+}
+
+func keysOf(m map[string]any) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
+}
+
 func TestPatchGameSystemLive_AdvancesMetaUpdateAudit(t *testing.T) {
 	r, _ := setupTestAs(t, []string{"admin"}) // admin patch -> Live -> setMetaCurrentVersion
 

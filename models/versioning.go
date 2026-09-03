@@ -81,19 +81,6 @@ func GetMeta(c context.Context, id string) (*EntityMeta, error) {
 	return results[0], nil
 }
 
-// liveMetaIDs returns the `_id`s of every non-soft-deleted meta record.
-func liveMetaIDs(c context.Context) ([]string, error) {
-	metas, err := database.Query[EntityMeta](metaCollection, notDeletedMeta, nil, nil, 0, 0)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]string, 0, len(metas))
-	for _, m := range metas {
-		ids = append(ids, m.ID)
-	}
-	return ids, nil
-}
-
 // GetVersion fetches one game system version's full field snapshot.
 func GetVersion(c context.Context, recordID string, version int) (*GameSystemVersion, error) {
 	filter := bson.D{{Key: "record_id", Value: recordID}, {Key: "version", Value: version}}
@@ -107,9 +94,9 @@ func GetVersion(c context.Context, recordID string, version int) (*GameSystemVer
 	return results[0], nil
 }
 
-// Get returns a game system's meta merged with its current version's data - the flattened
-// current view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
-func Get(c context.Context, id string) (*GameSystemVersion, error) {
+// Get returns a game system's current version flattened with its stable record's audit block -
+// the view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
+func Get(c context.Context, id string) (*GameSystemView, error) {
 	meta, err := GetMeta(c, id)
 	if err != nil {
 		return nil, err
@@ -117,26 +104,43 @@ func Get(c context.Context, id string) (*GameSystemVersion, error) {
 	if meta == nil {
 		return nil, nil
 	}
-	return GetVersion(c, meta.ID, meta.CurrentVersion)
+	version, err := GetVersion(c, meta.ID, meta.CurrentVersion)
+	if err != nil || version == nil {
+		return nil, err
+	}
+	return &GameSystemView{GameSystemVersion: *version, Auditable: meta.Auditable}, nil
 }
 
-// List returns every live game system's current version - the flattened view GET /systems
-// returns. Soft-deleted systems (deleted_at set on their meta record) are excluded.
-func List(c context.Context) ([]*GameSystemVersion, error) {
-	ids, err := liveMetaIDs(c)
+// List returns every live game system's current version, each flattened with its record's audit
+// block. Soft-deleted systems (deleted_at set on their meta record) are excluded.
+func List(c context.Context) ([]*GameSystemView, error) {
+	metas, err := database.Query[EntityMeta](metaCollection, notDeletedMeta, nil, nil, 0, 0)
 	if err != nil {
 		return nil, err
 	}
-	values := make(bson.A, len(ids))
-	for i, id := range ids {
-		values[i] = id
+	if len(metas) == 0 {
+		return []*GameSystemView{}, nil
+	}
+	auditByRecordID := make(map[string]modelcore.Auditable, len(metas))
+	values := make(bson.A, len(metas))
+	for i, m := range metas {
+		auditByRecordID[m.ID] = m.Auditable
+		values[i] = m.ID
 	}
 	filter := bson.D{
 		{Key: "state", Value: string(VersionStateLive)},
 		{Key: "record_id", Value: bson.D{{Key: "$in", Value: values}}},
 	}
 	sortOrder := bson.D{{Key: "name", Value: 1}}
-	return database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
+	versions, err := database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]*GameSystemView, 0, len(versions))
+	for _, v := range versions {
+		views = append(views, &GameSystemView{GameSystemVersion: *v, Auditable: auditByRecordID[v.RecordID]})
+	}
+	return views, nil
 }
 
 // ListVersions returns every version of a game system, newest first.
