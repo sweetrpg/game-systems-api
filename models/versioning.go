@@ -217,6 +217,9 @@ func CreateVersion(c context.Context, id string, gs *GameSystemVersion, state Ve
 	if meta == nil {
 		return nil, nil
 	}
+	// id may have arrived as the system_id slug; every version/meta write below keys on the
+	// canonical _id, which is also what record_id holds.
+	id = meta.ID
 
 	nextVersion, err := nextVersionNumber(c, id)
 	if err != nil {
@@ -321,6 +324,7 @@ func AcceptVersion(c context.Context, id string, version int, selectedFields []s
 	if meta == nil {
 		return nil, nil, fmt.Errorf("game system %s: meta record not found", id)
 	}
+	id = meta.ID // normalize a system_id slug to the canonical _id
 
 	current, err := GetVersion(c, id, meta.CurrentVersion)
 	if err != nil {
@@ -476,6 +480,8 @@ func SetCurrentVersion(c context.Context, id string, version int, actingUserID s
 	if meta == nil {
 		return nil, nil
 	}
+	id = meta.ID // normalize a system_id slug to the canonical _id
+
 	target, err := GetVersion(c, id, version)
 	if err != nil {
 		return nil, err
