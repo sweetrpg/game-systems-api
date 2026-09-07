@@ -1,4 +1,15 @@
 
+## 0.5.1 - 2026-09-07
+
+### <!-- 10 -->💼 Other
+- Ship backfill-canonical-user-ids binary in the image
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.5.0
+
+
+
 ## 0.5.0 - 2026-09-07
 
 ### <!-- 0 -->🚀 Features
