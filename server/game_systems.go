@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apiv "github.com/sweetrpg/api-core.go/vo"
+	"github.com/sweetrpg/authz-client.go/authz"
 	"github.com/sweetrpg/common.go/logging"
-	"github.com/sweetrpg/game-systems-api/authz"
 	"github.com/sweetrpg/game-systems-api/constants"
 	"github.com/sweetrpg/game-systems-api/internal/events"
 	"github.com/sweetrpg/game-systems-api/models"
