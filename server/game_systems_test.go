@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sweetrpg/authz-client.go/authz"
 	"github.com/sweetrpg/common.go/logging"
-	"github.com/sweetrpg/game-systems-api/authz"
 	"github.com/sweetrpg/game-systems-api/models"
 	modelcore "github.com/sweetrpg/model-core.go/models"
 	"github.com/sweetrpg/mongodb.go/database"
