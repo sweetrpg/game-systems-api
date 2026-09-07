@@ -1,4 +1,15 @@
 
+## 0.5.0 - 2026-09-07
+
+### <!-- 0 -->🚀 Features
+- Add canonical-user-ids backfill for pre-adoption rows
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.4.1
+
+
+
 ## 0.4.1 - 2026-09-07
 
 ### <!-- 1 -->🐛 Bug Fixes
