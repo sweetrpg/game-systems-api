@@ -3,7 +3,7 @@
 <html>
 	<head>
 		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-		<title>authz: Go Coverage Report</title>
+		<title>backfill-audit-fields: Go Coverage Report</title>
 		<style>
 			body {
 				background: black;
@@ -55,27 +55,23 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/sweetrpg/game-systems-api/authz/client.go (71.1%)</option>
+				<option value="file0">github.com/sweetrpg/game-systems-api/cmd/backfill-audit-fields/main.go (0.0%)</option>
 				
-				<option value="file1">github.com/sweetrpg/game-systems-api/authz/middleware.go (52.7%)</option>
+				<option value="file1">github.com/sweetrpg/game-systems-api/cmd/game-systems-api/main.go (0.0%)</option>
 				
-				<option value="file2">github.com/sweetrpg/game-systems-api/cmd/backfill-audit-fields/main.go (0.0%)</option>
+				<option value="file2">github.com/sweetrpg/game-systems-api/cmd/migrate-system-ids/main.go (12.8%)</option>
 				
-				<option value="file3">github.com/sweetrpg/game-systems-api/cmd/game-systems-api/main.go (0.0%)</option>
+				<option value="file3">github.com/sweetrpg/game-systems-api/internal/events/envelope.go (85.7%)</option>
 				
-				<option value="file4">github.com/sweetrpg/game-systems-api/cmd/migrate-system-ids/main.go (12.8%)</option>
+				<option value="file4">github.com/sweetrpg/game-systems-api/internal/events/publisher.go (17.4%)</option>
 				
-				<option value="file5">github.com/sweetrpg/game-systems-api/internal/events/envelope.go (85.7%)</option>
+				<option value="file5">github.com/sweetrpg/game-systems-api/models/versioning.go (6.8%)</option>
 				
-				<option value="file6">github.com/sweetrpg/game-systems-api/internal/events/publisher.go (17.4%)</option>
+				<option value="file6">github.com/sweetrpg/game-systems-api/server/game_systems.go (36.1%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (6.8%)</option>
+				<option value="file7">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
 				
-				<option value="file8">github.com/sweetrpg/game-systems-api/server/game_systems.go (36.1%)</option>
-				
-				<option value="file9">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
-				
-				<option value="file10">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
+				<option value="file8">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -98,300 +94,7 @@
 		</div>
 		<div id="content">
 		
-		<pre class="file" id="file0" style="display: none">// Package authz calls auth-api's POST /authz/check to verify a caller's bearer token and
-// resolve their roles, and provides Gin middleware that gates a route on holding one of a set
-// of allowed roles. Copied verbatim from catalog-api/authz - see platform's
-// user-authorization spec (openspec/specs/user-authorization/spec.md in sweetrpg/platform).
-package authz
-
-import (
-        "bytes"
-        "context"
-        "encoding/json"
-        "fmt"
-        "net/http"
-        "time"
-
-        "github.com/sweetrpg/common.go/logging"
-        "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-)
-
-// Platform role names, matching auth-api's fixed role model exactly.
-const (
-        RoleUser      = "user"
-        RoleSubmitter = "submitter"
-        RoleEditor    = "editor"
-        RoleModerator = "moderator"
-        RoleApprover  = "approver"
-        RoleAdmin     = "admin"
-)
-
-// CheckResponse is the union of auth-api's allowed/denied /authz/check response shapes.
-type CheckResponse struct {
-        Allowed bool     `json:"allowed"`
-        Roles   []string `json:"roles"`
-        Sub     string   `json:"sub"`
-        Reason  string   `json:"reason"`
-}
-
-// InvalidTokenError means auth-api rejected the bearer token itself (missing, expired,
-// unverifiable) - distinct from a service-level deny (Allowed: false with a Reason) or a
-// transport/backend failure.
-type InvalidTokenError struct{}
-
-func (InvalidTokenError) Error() string <span class="cov0" title="0">{ return "authz: invalid or missing token" }</span>
-
-// Client calls auth-api's /authz/check endpoint (identity + roles) and users-api's /profile
-// endpoint (resolving a verified subject to its canonical users._id).
-type Client struct {
-        baseURL      string
-        usersBaseURL string
-        http         *http.Client
-}
-
-// NewClient builds a Client against auth-api's base URL and users-api's base URL. An empty
-// authBaseURL is accepted so the service can still start when AUTH_API_URL isn't configured;
-// every Check call then fails with a transport error, which RequireAnyRole surfaces as a 503.
-// An empty usersBaseURL makes ResolveUserID always return "" - RequireAnyRole then rejects
-// writes it cannot attribute rather than stamping an empty actor.
-func NewClient(authBaseURL, usersBaseURL string) *Client <span class="cov10" title="3">{
-        return &amp;Client{
-                baseURL:      authBaseURL,
-                usersBaseURL: usersBaseURL,
-                http: &amp;http.Client{
-                        Timeout:   5 * time.Second,
-                        Transport: otelhttp.NewTransport(http.DefaultTransport),
-                },
-        }
-}</span>
-
-// profileResponse is the slice of users-api's /profile response this service reads.
-type profileResponse struct {
-        UserID string `json:"user_id"`
-}
-
-// ResolveUserID exchanges a verified bearer token for the caller's canonical users._id by
-// calling users-api's GET /profile. Returns "" when the token is missing, users-api is
-// unconfigured or unavailable, or the subject has no provisioned profile (HTTP 404/401).
-func (c *Client) ResolveUserID(ctx context.Context, token string) string <span class="cov10" title="3">{
-        if c.usersBaseURL == "" || token == "" </span><span class="cov1" title="1">{
-                return ""
-        }</span>
-
-        <span class="cov6" title="2">req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.usersBaseURL+"/profile", nil)
-        if err != nil </span><span class="cov0" title="0">{
-                logging.Logger.Debug("users-api resolve: build request", "error", err.Error())
-                return ""
-        }</span>
-        <span class="cov6" title="2">req.Header.Set("Authorization", "Bearer "+token)
-
-        resp, err := c.http.Do(req)
-        if err != nil </span><span class="cov0" title="0">{
-                logging.Logger.Debug("users-api resolve: request failed", "error", err.Error())
-                return ""
-        }</span>
-        <span class="cov6" title="2">defer func() </span><span class="cov6" title="2">{ _ = resp.Body.Close() }</span>()
-
-        <span class="cov6" title="2">if resp.StatusCode != http.StatusOK </span><span class="cov1" title="1">{
-                logging.Logger.Debug("users-api resolve: unexpected status", "status", resp.StatusCode)
-                return ""
-        }</span>
-
-        <span class="cov1" title="1">var out profileResponse
-        if err := json.NewDecoder(resp.Body).Decode(&amp;out); err != nil </span><span class="cov0" title="0">{
-                logging.Logger.Debug("users-api resolve: decode response", "error", err.Error())
-                return ""
-        }</span>
-        <span class="cov1" title="1">return out.UserID</span>
-}
-
-// Check verifies token against auth-api and returns the caller's allowed/roles/subject for the
-// given service name. Returns InvalidTokenError if auth-api rejects the token itself.
-func (c *Client) Check(ctx context.Context, token, service string) (*CheckResponse, error) <span class="cov10" title="3">{
-        body, err := json.Marshal(map[string]string{"service": service})
-        if err != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("authz: marshal request: %w", err)
-        }</span>
-
-        <span class="cov10" title="3">req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/authz/check", bytes.NewReader(body))
-        if err != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("authz: build request: %w", err)
-        }</span>
-        <span class="cov10" title="3">req.Header.Set("Content-Type", "application/json")
-        req.Header.Set("Authorization", "Bearer "+token)
-
-        resp, err := c.http.Do(req)
-        if err != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("authz: request failed: %w", err)
-        }</span>
-        <span class="cov10" title="3">defer func() </span><span class="cov10" title="3">{ _ = resp.Body.Close() }</span>()
-
-        <span class="cov10" title="3">if resp.StatusCode == http.StatusUnauthorized </span><span class="cov0" title="0">{
-                return nil, InvalidTokenError{}
-        }</span>
-        <span class="cov10" title="3">if resp.StatusCode != http.StatusOK </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("authz: unexpected status %d from auth-api", resp.StatusCode)
-        }</span>
-
-        <span class="cov10" title="3">var out CheckResponse
-        if err := json.NewDecoder(resp.Body).Decode(&amp;out); err != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("authz: decode response: %w", err)
-        }</span>
-
-        <span class="cov10" title="3">logging.Logger.Debug("authz check", "service", service, "allowed", out.Allowed)
-        return &amp;out, nil</span>
-}
-</pre>
-		
-		<pre class="file" id="file1" style="display: none">package authz
-
-import (
-        "net/http"
-
-        "github.com/gin-gonic/gin"
-        apiv "github.com/sweetrpg/api-core.go/vo"
-        "github.com/sweetrpg/common.go/logging"
-)
-
-// Gin context keys set by RequireAnyRole; read via Roles/Subject/Viewer.
-const (
-        rolesContextKey   = "authz.roles"
-        subjectContextKey = "authz.subject"
-        viewerContextKey  = "authz.viewer"
-)
-
-// RequireAnyRole returns Gin middleware that verifies the caller's bearer token against
-// auth-api's /authz/check for the given service name, then requires the caller hold at least
-// one of allowedRoles. On success, the verified roles and subject are stashed in the Gin
-// context (read via Roles(c) / Subject(c)) for the handler to use.
-func RequireAnyRole(client *Client, service string, allowedRoles ...string) gin.HandlerFunc <span class="cov10" title="3">{
-        return func(c *gin.Context) </span><span class="cov10" title="3">{
-                token := bearerToken(c)
-                if token == "" </span><span class="cov0" title="0">{
-                        unauthorized(c)
-                        return
-                }</span>
-
-                <span class="cov10" title="3">result, err := client.Check(c.Request.Context(), token, service)
-                if err != nil </span><span class="cov0" title="0">{
-                        if _, ok := err.(InvalidTokenError); ok </span><span class="cov0" title="0">{
-                                unauthorized(c)
-                                return
-                        }</span>
-                        <span class="cov0" title="0">logging.Logger.Error("authz check failed", "error", err.Error())
-                        c.AbortWithStatusJSON(http.StatusServiceUnavailable, apiv.ErrorVO{
-                                Error:   "authz_unavailable",
-                                Message: "Unable to verify authorization",
-                        })
-                        return</span>
-                }
-
-                <span class="cov10" title="3">if !result.Allowed </span><span class="cov0" title="0">{
-                        forbidden(c)
-                        return
-                }</span>
-
-                <span class="cov10" title="3">if !hasAnyRole(result.Roles, allowedRoles) </span><span class="cov0" title="0">{
-                        forbidden(c)
-                        return
-                }</span>
-
-                // Resolve the verified subject to its canonical users._id so writes stamp the platform
-                // audit fields with a canonical actor (PADR-0001), not the raw Auth0 subject. A
-                // role-holding caller has logged in and is provisioned; an unresolvable id means
-                // users-api is unreachable, and a write that can't be attributed must not proceed.
-                <span class="cov10" title="3">viewer := client.ResolveUserID(c.Request.Context(), token)
-                if viewer == "" </span><span class="cov6" title="2">{
-                        logging.Logger.Error("could not resolve caller to a canonical user id", "sub", result.Sub)
-                        c.AbortWithStatusJSON(http.StatusServiceUnavailable, apiv.ErrorVO{
-                                Error:   "user_resolution_unavailable",
-                                Message: "Unable to resolve the calling user",
-                        })
-                        return
-                }</span>
-
-                <span class="cov1" title="1">c.Set(rolesContextKey, result.Roles)
-                c.Set(subjectContextKey, result.Sub)
-                c.Set(viewerContextKey, viewer)
-                c.Next()</span>
-        }
-}
-
-// Viewer returns the caller's canonical users._id stashed in the Gin context by RequireAnyRole.
-// Empty only on a route that did not pass through RequireAnyRole.
-func Viewer(c *gin.Context) string <span class="cov1" title="1">{
-        if v, ok := c.Get(viewerContextKey); ok </span><span class="cov1" title="1">{
-                if id, ok := v.(string); ok </span><span class="cov1" title="1">{
-                        return id
-                }</span>
-        }
-        <span class="cov0" title="0">return ""</span>
-}
-
-// Roles returns the verified roles stashed in the Gin context by RequireAnyRole.
-func Roles(c *gin.Context) []string <span class="cov0" title="0">{
-        if v, ok := c.Get(rolesContextKey); ok </span><span class="cov0" title="0">{
-                if roles, ok := v.([]string); ok </span><span class="cov0" title="0">{
-                        return roles
-                }</span>
-        }
-        <span class="cov0" title="0">return nil</span>
-}
-
-// Subject returns the verified Auth0 subject stashed in the Gin context by RequireAnyRole.
-func Subject(c *gin.Context) string <span class="cov0" title="0">{
-        if v, ok := c.Get(subjectContextKey); ok </span><span class="cov0" title="0">{
-                if sub, ok := v.(string); ok </span><span class="cov0" title="0">{
-                        return sub
-                }</span>
-        }
-        <span class="cov0" title="0">return ""</span>
-}
-
-// HasRole reports whether roles contains want.
-func HasRole(roles []string, want string) bool <span class="cov10" title="3">{
-        for _, r := range roles </span><span class="cov10" title="3">{
-                if r == want </span><span class="cov10" title="3">{
-                        return true
-                }</span>
-        }
-        <span class="cov0" title="0">return false</span>
-}
-
-func hasAnyRole(have []string, want []string) bool <span class="cov10" title="3">{
-        for _, w := range want </span><span class="cov10" title="3">{
-                if HasRole(have, w) </span><span class="cov10" title="3">{
-                        return true
-                }</span>
-        }
-        <span class="cov0" title="0">return false</span>
-}
-
-func bearerToken(c *gin.Context) string <span class="cov10" title="3">{
-        const prefix = "Bearer "
-        auth := c.GetHeader("Authorization")
-        if len(auth) &lt;= len(prefix) || auth[:len(prefix)] != prefix </span><span class="cov0" title="0">{
-                return ""
-        }</span>
-        <span class="cov10" title="3">return auth[len(prefix):]</span>
-}
-
-func unauthorized(c *gin.Context) <span class="cov0" title="0">{
-        c.AbortWithStatusJSON(http.StatusUnauthorized, apiv.ErrorVO{
-                Error:   "invalid_token",
-                Message: "Missing or invalid bearer token",
-        })
-}</span>
-
-func forbidden(c *gin.Context) <span class="cov0" title="0">{
-        c.AbortWithStatusJSON(http.StatusForbidden, apiv.ErrorVO{
-                Error:   "forbidden",
-                Message: "Caller does not have a qualifying role",
-        })
-}</span>
-</pre>
-		
-		<pre class="file" id="file2" style="display: none">// Command backfill-audit-fields populates the platform audit fields (PADR-0001) on
+		<pre class="file" id="file0" style="display: none">// Command backfill-audit-fields populates the platform audit fields (PADR-0001) on
 // game_systems_meta records that predate the convention: updated_at / updated_by (mirrored from
 // created_at / created_by), leaving deleted_at / deleted_by null. Version records are unchanged -
 // their submission/review trail (VersionLifecycle) is their audit record.
@@ -479,7 +182,7 @@ func main() <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file3" style="display: none">package main
+		<pre class="file" id="file1" style="display: none">package main
 
 import (
         "context"
@@ -490,9 +193,9 @@ import (
         sloggin "github.com/samber/slog-gin"
         apiconstants "github.com/sweetrpg/api-core.go/constants"
         "github.com/sweetrpg/api-core.go/tracing"
+        "github.com/sweetrpg/authz-client.go/authz"
         "github.com/sweetrpg/common.go/logging"
         "github.com/sweetrpg/common.go/util"
-        "github.com/sweetrpg/game-systems-api/authz"
         "github.com/sweetrpg/game-systems-api/constants"
         "github.com/sweetrpg/game-systems-api/internal/events"
         "github.com/sweetrpg/game-systems-api/models"
@@ -536,7 +239,7 @@ func main() <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file4" style="display: none">package main
+		<pre class="file" id="file2" style="display: none">package main
 
 import (
         "context"
@@ -654,7 +357,7 @@ func slugify(s string) string <span class="cov10" title="4">{
 }
 </pre>
 		
-		<pre class="file" id="file5" style="display: none">package events
+		<pre class="file" id="file3" style="display: none">package events
 
 import (
         "encoding/json"
@@ -706,7 +409,7 @@ func NewEnvelope(eventID, entityType, entityID, action string, revision int, dat
 }
 </pre>
 		
-		<pre class="file" id="file6" style="display: none">package events
+		<pre class="file" id="file4" style="display: none">package events
 
 import (
         "context"
@@ -850,7 +553,7 @@ func buildPublish(e *Envelope) (subject string, body []byte, msgID string, err e
 }
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">package models
+		<pre class="file" id="file5" style="display: none">package models
 
 import (
         "context"
@@ -1362,7 +1065,7 @@ func SetCurrentVersion(c context.Context, id string, version int, actingUserID s
 }
 </pre>
 		
-		<pre class="file" id="file8" style="display: none">package server
+		<pre class="file" id="file6" style="display: none">package server
 
 import (
         "encoding/json"
@@ -1371,8 +1074,8 @@ import (
 
         "github.com/gin-gonic/gin"
         apiv "github.com/sweetrpg/api-core.go/vo"
+        "github.com/sweetrpg/authz-client.go/authz"
         "github.com/sweetrpg/common.go/logging"
-        "github.com/sweetrpg/game-systems-api/authz"
         "github.com/sweetrpg/game-systems-api/constants"
         "github.com/sweetrpg/game-systems-api/internal/events"
         "github.com/sweetrpg/game-systems-api/models"
@@ -1736,11 +1439,11 @@ func setCurrentGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file9" style="display: none">package server
+		<pre class="file" id="file7" style="display: none">package server
 
 import (
         "github.com/gin-gonic/gin"
-        "github.com/sweetrpg/game-systems-api/authz"
+        "github.com/sweetrpg/authz-client.go/authz"
         "github.com/sweetrpg/game-systems-api/internal/events"
 )
 
@@ -1750,7 +1453,7 @@ func SetupHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPu
 }</span>
 </pre>
 		
-		<pre class="file" id="file10" style="display: none">package server
+		<pre class="file" id="file8" style="display: none">package server
 
 import (
         "net/http"
