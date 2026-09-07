@@ -1,4 +1,19 @@
 
+## 0.4.1 - 2026-09-07
+
+### <!-- 1 -->🐛 Bug Fixes
+- Refresh interval
+
+
+### <!-- 2 -->🚜 Refactor
+- Adopt shared authz-client.go
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.4.0
+
+
+
 ## 0.4.0 - 2026-09-03
 
 ### <!-- 0 -->🚀 Features
