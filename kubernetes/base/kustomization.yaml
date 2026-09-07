@@ -5,6 +5,7 @@ kind: Kustomization
 resources:
   - configmaps.yaml
   - deployment.yaml
+  - hpa.yaml
   - service-account.yaml
   - service-latest.yaml
   - service.yaml
