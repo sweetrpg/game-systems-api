@@ -102,15 +102,43 @@ func GetVersion(c context.Context, recordID string, version int) (*GameSystemVer
 	return results[0], nil
 }
 
+// getVersionByID fetches a version snapshot by its own document `_id`.
+func getVersionByID(c context.Context, id string) (*GameSystemVersion, error) {
+	results, err := database.Query[GameSystemVersion](versionCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	return results[0], nil
+}
+
 // Get returns a game system's current version flattened with its stable record's audit block -
-// the view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
+// the view GET /systems/:id returns. id may be the meta document `_id`, the `system_id` slug, or
+// a version document's own `_id` (the detail payload exposes that as its `id`, so a client that
+// round-trips it must resolve).
 func Get(c context.Context, id string) (*GameSystemView, error) {
 	meta, err := GetMeta(c, id)
 	if err != nil {
 		return nil, err
 	}
 	if meta == nil {
-		return nil, nil
+		// Not a meta _id or system_id - try it as a version document's own _id.
+		version, err := getVersionByID(c, id)
+		if err != nil {
+			return nil, err
+		}
+		if version == nil {
+			return nil, nil
+		}
+		meta, err = GetMeta(c, version.RecordID)
+		if err != nil {
+			return nil, err
+		}
+		if meta == nil {
+			return nil, nil
+		}
 	}
 	version, err := GetVersion(c, meta.ID, meta.CurrentVersion)
 	if err != nil || version == nil {

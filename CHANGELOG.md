@@ -1,4 +1,15 @@
 
+## 0.7.1 - 2026-09-08
+
+### <!-- 1 -->🐛 Bug Fixes
+- Resolve GET /systems/:id by a version document _id
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.7.0
+
+
+
 ## 0.7.0 - 2026-09-08
 
 ### <!-- 0 -->🚀 Features
