@@ -67,13 +67,17 @@
 				
 				<option value="file5">github.com/sweetrpg/game-systems-api/internal/events/publisher.go (17.4%)</option>
 				
-				<option value="file6">github.com/sweetrpg/game-systems-api/models/versioning.go (6.8%)</option>
+				<option value="file6">github.com/sweetrpg/game-systems-api/models/stats.go (100.0%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-systems-api/server/game_systems.go (36.1%)</option>
+				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (6.8%)</option>
 				
-				<option value="file8">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
+				<option value="file8">github.com/sweetrpg/game-systems-api/server/game_systems.go (36.1%)</option>
 				
-				<option value="file9">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
+				<option value="file9">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
+				
+				<option value="file10">github.com/sweetrpg/game-systems-api/server/stats.go (71.4%)</option>
+				
+				<option value="file11">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -751,6 +755,22 @@ func buildPublish(e *Envelope) (subject string, body []byte, msgID string, err e
 
 import (
         "context"
+
+        "github.com/sweetrpg/mongodb.go/database"
+)
+
+// CountGameSystems returns the number of live game systems - one per distinct system, matching
+// what List returns and what catalog-api's /stats reports per entity type. Soft-deleted records
+// (deleted_at set on the meta record, per PADR-0001) are excluded.
+func CountGameSystems(c context.Context) (int64, error) <span class="cov10" title="3">{
+        return database.Db.Collection(metaCollection).CountDocuments(c, notDeletedMeta)
+}</span>
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">package models
+
+import (
+        "context"
         "fmt"
         "reflect"
         "regexp"
@@ -1259,7 +1279,7 @@ func SetCurrentVersion(c context.Context, id string, version int, actingUserID s
 }
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">package server
+		<pre class="file" id="file8" style="display: none">package server
 
 import (
         "encoding/json"
@@ -1633,7 +1653,7 @@ func setCurrentGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file8" style="display: none">package server
+		<pre class="file" id="file9" style="display: none">package server
 
 import (
         "github.com/gin-gonic/gin"
@@ -1643,11 +1663,54 @@ import (
 
 func SetupHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov0" title="0">{
         setupGameSystemHandlers(g, authzClient, pub)
+        setupStatsHandlers(g)
         setupStatusHandlers(g)
 }</span>
 </pre>
 		
-		<pre class="file" id="file9" style="display: none">package server
+		<pre class="file" id="file10" style="display: none">package server
+
+import (
+        "net/http"
+
+        "github.com/gin-gonic/gin"
+        apiv "github.com/sweetrpg/api-core.go/vo"
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/game-systems-api/models"
+)
+
+// gameSystemStatsResponse is a plain JSON object, not a JSON:API resource - a singleton
+// aggregate over the whole game-systems collection, matching catalog-api's /stats shape.
+type gameSystemStatsResponse struct {
+        GameSystems int64 `json:"game_systems"`
+}
+
+func setupStatsHandlers(g *gin.Engine) <span class="cov10" title="3">{
+        logging.Logger.Info("Setting up stats endpoint handlers...")
+
+        g.GET("/stats", getGameSystemStats)
+}</span>
+
+// Get game-system stats.
+//
+//        @Summary                Get game-system stats
+//        @Description        Returns the current count of game-system documents in a single call, mirroring catalog-api's /stats endpoint. Unauthenticated: exposes only an aggregate count, no per-record data.
+//        @Tags                        stats
+//        @Produce                json
+//        @Success                200        {object}        gameSystemStatsResponse
+//        @Failure                500        {object}        interface{}
+//        @Router                        /stats [get]
+func getGameSystemStats(c *gin.Context) <span class="cov10" title="3">{
+        count, err := models.CountGameSystems(c.Request.Context())
+        if err != nil </span><span class="cov0" title="0">{
+                c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
+                return
+        }</span>
+        <span class="cov10" title="3">c.JSON(http.StatusOK, gameSystemStatsResponse{GameSystems: count})</span>
+}
+</pre>
+		
+		<pre class="file" id="file11" style="display: none">package server
 
 import (
         "net/http"
