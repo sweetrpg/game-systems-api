@@ -1,4 +1,15 @@
 
+## 0.7.0 - 2026-09-08
+
+### <!-- 0 -->🚀 Features
+- Search/sort/paginate GET /systems at the query layer
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.6.0
+
+
+
 ## [Unreleased]
 
 ### <!-- 0 -->🚀 Features
