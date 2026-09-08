@@ -41,7 +41,7 @@ jobs:
                     git config --global user.name "SweetRPG Depedency Updater"
                     git checkout "$CHECKOUT_REF"
 
-                    go run github.com/swaggo/swag/cmd/swag@latest init -d cmd/gamesystems-api/,server/,models/ --parseDependency --parseInternal
+                    go run github.com/swaggo/swag/cmd/swag@latest init -d cmd/game-systems-api/,server/,models/ --parseDependency --parseInternal
 
                     git add docs/
                     git commit -m "Generate docs" || exit 0
