@@ -23,6 +23,26 @@ go run ./cmd/game-systems-api
 Needs a MongoDB instance reachable per `mongodb.go`'s `DB_*` environment variables (`DB_URI`, or
 `DB_HOST`/`DB_SCHEME`/`DB_USER`/`DB_PW`/`DB_NAME`/`DB_PORT`/`DB_OPTS`).
 
+## HTTP API
+
+`GET /systems` lists live game systems, filtered/sorted/paged at the query layer:
+
+| Param      | Default | Notes                                                        |
+|------------|---------|-------------------------------------------------------------|
+| `q`        | -       | Case-insensitive substring match on name                    |
+| `sort`     | `name`  | One of `name`, `-name`, `created`, `-created`               |
+| `page`     | `1`     | 1-based                                                      |
+| `per_page` | `24`    | Hard max 100; larger values are clamped, not rejected       |
+
+Response:
+
+```json
+{ "systems": [ /* flattened current views */ ], "total": 0, "page": 1, "per_page": 24 }
+```
+
+A non-integer `page`/`per_page` or an off-allowlist `sort` returns `400`. With no params the
+endpoint returns the first page under the default sort and size.
+
 ## Documentation
 
 Package documentation: [pkg.go.dev/github.com/sweetrpg/game-systems-api](https://pkg.go.dev/github.com/sweetrpg/game-systems-api).

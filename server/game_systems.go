@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -84,13 +85,54 @@ func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub event
 	g.POST("/systems/:id/versions/:version/current", reviewRoles, setCurrentGameSystemVersion)
 }
 
+// listSystemsResponse is the GET /systems envelope: a bounded page of systems plus the total
+// count matching the search. Clients that predate pagination also accept a bare array.
+type listSystemsResponse struct {
+	Systems []*models.GameSystemView `json:"systems"`
+	Total   int                      `json:"total"`
+	Page    int                      `json:"page"`
+	PerPage int                      `json:"per_page"`
+}
+
+// parseListParams reads the GET /systems query string. A non-integer page or per_page is a
+// client error; out-of-range values are left for models.List to clamp.
+func parseListParams(c *gin.Context) (models.ListParams, error) {
+	params := models.ListParams{Search: c.Query("q"), Sort: c.Query("sort")}
+	if raw := c.Query("page"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return params, errors.New("page must be an integer")
+		}
+		params.Page = n
+	}
+	if raw := c.Query("per_page"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return params, errors.New("per_page must be an integer")
+		}
+		params.PerPage = n
+	}
+	return params, nil
+}
+
 func listGameSystems(c *gin.Context) {
-	results, err := models.List(c.Request.Context())
+	params, err := parseListParams(c)
 	if err != nil {
+		c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: err.Error()})
+		return
+	}
+	result, err := models.List(c.Request.Context(), params)
+	if err != nil {
+		if errors.Is(err, models.ErrInvalidSort) {
+			c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "sort must be one of name, -name, created, -created"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, results)
+	c.JSON(http.StatusOK, listSystemsResponse{
+		Systems: result.Systems, Total: result.Total, Page: result.Page, PerPage: result.PerPage,
+	})
 }
 
 func getGameSystem(c *gin.Context) {

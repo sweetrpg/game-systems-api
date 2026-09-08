@@ -1,4 +1,22 @@
 
+## 0.7.0 - 2026-09-08
+
+### <!-- 0 -->🚀 Features
+- Search/sort/paginate GET /systems at the query layer
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.6.0
+
+
+
+## [Unreleased]
+
+### <!-- 0 -->🚀 Features
+- `GET /systems` accepts `q`, `sort`, `page`, `per_page` and returns `{ systems, total, page, per_page }`; search, sort, paging, and count are evaluated by one MongoDB aggregation
+- Add `{ state: 1, name: 1 }` index on `game_systems_versions`
+
+
 ## 0.6.0 - 2026-09-08
 
 ### <!-- 0 -->🚀 Features
