@@ -69,9 +69,9 @@
 				
 				<option value="file6">github.com/sweetrpg/game-systems-api/models/stats.go (100.0%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (6.8%)</option>
+				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (21.3%)</option>
 				
-				<option value="file8">github.com/sweetrpg/game-systems-api/server/game_systems.go (36.1%)</option>
+				<option value="file8">github.com/sweetrpg/game-systems-api/server/game_systems.go (41.0%)</option>
 				
 				<option value="file9">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
 				
@@ -771,6 +771,7 @@ func CountGameSystems(c context.Context) (int64, error) <span class="cov10" titl
 
 import (
         "context"
+        "errors"
         "fmt"
         "reflect"
         "regexp"
@@ -795,14 +796,14 @@ const (
 )
 
 // ValidateSystemID reports whether s is a well-formed system_id slug.
-func ValidateSystemID(s string) bool <span class="cov7" title="10">{
+func ValidateSystemID(s string) bool <span class="cov5" title="10">{
         matched, err := regexp.MatchString(SystemIDPattern, s)
         return err == nil &amp;&amp; matched
 }</span>
 
 // EnsureIndexes creates the indexes game system version queries rely on. Safe to call on every
 // startup.
-func EnsureIndexes(c context.Context) error <span class="cov0" title="0">{
+func EnsureIndexes(c context.Context) error <span class="cov1" title="1">{
         _, err := database.Db.Collection(metaCollection).Indexes().CreateOne(c, mongo.IndexModel{
                 Keys:    bson.D{{Key: "system_id", Value: 1}},
                 Options: options.Index().SetUnique(true),
@@ -810,20 +811,27 @@ func EnsureIndexes(c context.Context) error <span class="cov0" title="0">{
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("game system: create system_id index: %w", err)
         }</span>
-        <span class="cov0" title="0">_, err = database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
+        <span class="cov1" title="1">_, err = database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
                 Keys:    bson.D{{Key: "record_id", Value: 1}, {Key: "version", Value: 1}},
                 Options: options.Index().SetUnique(true),
         })
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("game system: create record_id+version index: %w", err)
         }</span>
-        <span class="cov0" title="0">_, err = database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
+        <span class="cov1" title="1">_, err = database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
                 Keys: bson.D{{Key: "record_id", Value: 1}, {Key: "state", Value: 1}},
         })
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("game system: create record_id+state index: %w", err)
         }</span>
-        <span class="cov0" title="0">return nil</span>
+        // Covers the List aggregation's leading stages: $match state=live then $sort by name.
+        <span class="cov1" title="1">_, err = database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
+                Keys: bson.D{{Key: "state", Value: 1}, {Key: "name", Value: 1}},
+        })
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("game system: create state+name index: %w", err)
+        }</span>
+        <span class="cov1" title="1">return nil</span>
 }
 
 // notDeletedMeta excludes soft-deleted meta records (deleted_at absent or null) - the platform
@@ -880,36 +888,140 @@ func Get(c context.Context, id string) (*GameSystemView, error) <span class="cov
         <span class="cov0" title="0">return &amp;GameSystemView{GameSystemVersion: *version, Auditable: meta.Auditable}, nil</span>
 }
 
-// List returns every live game system's current version, each flattened with its record's audit
-// block. Soft-deleted systems (deleted_at set on their meta record) are excluded.
-func List(c context.Context) ([]*GameSystemView, error) <span class="cov0" title="0">{
-        metas, err := database.Query[EntityMeta](metaCollection, notDeletedMeta, nil, nil, 0, 0)
-        if err != nil </span><span class="cov0" title="0">{
-                return nil, err
+// ListParams controls GET /systems: a case-insensitive name-substring search, a sort key drawn
+// from listSortKeys, and 1-based pagination. The zero value lists page 1 at the default sort and
+// page size.
+type ListParams struct {
+        Search  string
+        Sort    string
+        Page    int
+        PerPage int
+}
+
+// ListResult is one page of List output plus the total count of systems matching Search,
+// independent of the page window.
+type ListResult struct {
+        Systems []*GameSystemView
+        Total   int
+        Page    int
+        PerPage int
+}
+
+// ErrInvalidSort is returned by List when ListParams.Sort is not one of listSortKeys.
+var ErrInvalidSort = errors.New("game system: unsupported sort key")
+
+const (
+        listDefaultPerPage = 24
+        listMaxPerPage     = 100
+)
+
+// listSortKeys is the sort allowlist: it maps each accepted sort parameter to its aggregation
+// sort document, so the sort string can't inject an arbitrary field path. "created" orders on
+// the stable record's creation time, carried on the joined meta.
+var listSortKeys = map[string]bson.D{
+        "":         {{Key: "name", Value: 1}},
+        "name":     {{Key: "name", Value: 1}},
+        "-name":    {{Key: "name", Value: -1}},
+        "created":  {{Key: "meta.created_at", Value: 1}},
+        "-created": {{Key: "meta.created_at", Value: -1}},
+}
+
+// listRow decodes one $facet page element: the version document inline, plus its joined meta.
+type listRow struct {
+        GameSystemVersion `bson:",inline"`
+        Meta              EntityMeta `bson:"meta"`
+}
+
+// List returns one page of live game systems' current views - optionally filtered by a
+// case-insensitive name search, ordered by params.Sort - together with the total match count.
+// The search, sort, soft-delete exclusion, skip/limit, and count are all evaluated by a single
+// MongoDB aggregation on game_systems_versions. The meta-side soft-delete filter is why this is
+// a $lookup rather than a version-only skip/limit (design.md decision 1). An out-of-range Page
+// or PerPage is clamped, not rejected; an unknown Sort returns ErrInvalidSort.
+func List(c context.Context, params ListParams) (*ListResult, error) <span class="cov6" title="13">{
+        sortKey, ok := listSortKeys[params.Sort]
+        if !ok </span><span class="cov1" title="1">{
+                return nil, ErrInvalidSort
         }</span>
-        <span class="cov0" title="0">if len(metas) == 0 </span><span class="cov0" title="0">{
-                return []*GameSystemView{}, nil
+
+        <span class="cov6" title="12">page := params.Page
+        if page &lt; 1 </span><span class="cov6" title="11">{
+                page = 1
         }</span>
-        <span class="cov0" title="0">auditByRecordID := make(map[string]modelcore.Auditable, len(metas))
-        values := make(bson.A, len(metas))
-        for i, m := range metas </span><span class="cov0" title="0">{
-                auditByRecordID[m.ID] = m.Auditable
-                values[i] = m.ID
-        }</span>
-        <span class="cov0" title="0">filter := bson.D{
-                {Key: "state", Value: string(VersionStateLive)},
-                {Key: "record_id", Value: bson.D{{Key: "$in", Value: values}}},
+        <span class="cov6" title="12">perPage := params.PerPage
+        switch </span>{
+        case perPage &lt; 1:<span class="cov5" title="10">
+                perPage = listDefaultPerPage</span>
+        case perPage &gt; listMaxPerPage:<span class="cov1" title="1">
+                perPage = listMaxPerPage</span>
         }
-        sortOrder := bson.D{{Key: "name", Value: 1}}
-        versions, err := database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
+
+        <span class="cov6" title="12">match := bson.D{{Key: "state", Value: string(VersionStateLive)}}
+        if params.Search != "" </span><span class="cov3" title="3">{
+                match = append(match, bson.E{Key: "name", Value: primitive.Regex{
+                        Pattern: regexp.QuoteMeta(params.Search), Options: "i",
+                }})
+        }</span>
+
+        // Stable order: the requested key, then _id as a tiebreaker so paging can't skip or repeat
+        // rows that share a sort value.
+        <span class="cov6" title="12">pageSort := make(bson.D, 0, len(sortKey)+1)
+        pageSort = append(pageSort, sortKey...)
+        pageSort = append(pageSort, bson.E{Key: "_id", Value: 1})
+
+        pipeline := mongo.Pipeline{
+                bson.D{{Key: "$match", Value: match}},
+                bson.D{{Key: "$lookup", Value: bson.D{
+                        {Key: "from", Value: metaCollection},
+                        {Key: "localField", Value: "record_id"},
+                        {Key: "foreignField", Value: "_id"},
+                        {Key: "as", Value: "meta"},
+                }}},
+                bson.D{{Key: "$unwind", Value: "$meta"}},
+                bson.D{{Key: "$match", Value: bson.D{{Key: "meta.deleted_at", Value: nil}}}},
+                bson.D{{Key: "$facet", Value: bson.D{
+                        {Key: "page", Value: bson.A{
+                                bson.D{{Key: "$sort", Value: pageSort}},
+                                bson.D{{Key: "$skip", Value: int64(page-1) * int64(perPage)}},
+                                bson.D{{Key: "$limit", Value: int64(perPage)}},
+                        }},
+                        {Key: "total", Value: bson.A{
+                                bson.D{{Key: "$count", Value: "n"}},
+                        }},
+                }}},
+        }
+
+        cur, err := database.Db.Collection(versionCollection).Aggregate(c, pipeline)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov0" title="0">views := make([]*GameSystemView, 0, len(versions))
-        for _, v := range versions </span><span class="cov0" title="0">{
-                views = append(views, &amp;GameSystemView{GameSystemVersion: *v, Auditable: auditByRecordID[v.RecordID]})
+        <span class="cov6" title="12">defer func() </span><span class="cov6" title="12">{ _ = cur.Close(c) }</span>()
+
+        <span class="cov6" title="12">var facets []struct {
+                Page  []listRow `bson:"page"`
+                Total []struct {
+                        N int `bson:"n"`
+                } `bson:"total"`
+        }
+        if err := cur.All(c, &amp;facets); err != nil </span><span class="cov0" title="0">{
+                return nil, err
         }</span>
-        <span class="cov0" title="0">return views, nil</span>
+
+        <span class="cov6" title="12">result := &amp;ListResult{Systems: []*GameSystemView{}, Page: page, PerPage: perPage}
+        if len(facets) == 0 </span><span class="cov0" title="0">{
+                return result, nil
+        }</span>
+        <span class="cov6" title="12">if len(facets[0].Total) &gt; 0 </span><span class="cov6" title="11">{
+                result.Total = facets[0].Total[0].N
+        }</span>
+        <span class="cov6" title="12">for i := range facets[0].Page </span><span class="cov10" title="69">{
+                row := facets[0].Page[i]
+                result.Systems = append(result.Systems, &amp;GameSystemView{
+                        GameSystemVersion: row.GameSystemVersion,
+                        Auditable:         row.Meta.Auditable,
+                })
+        }</span>
+        <span class="cov6" title="12">return result, nil</span>
 }
 
 // ListVersions returns every version of a game system, newest first.
@@ -1026,24 +1138,24 @@ func CreateVersion(c context.Context, id string, gs *GameSystemVersion, state Ve
 
 // fieldValue/setFieldValue/changedFields back AcceptVersion's selected-fields diff/apply logic -
 // the same substantive fields a PATCH can change.
-func fieldValue(v *GameSystemVersion, field string) any <span class="cov10" title="20">{
+func fieldValue(v *GameSystemVersion, field string) any <span class="cov7" title="20">{
         switch field </span>{
-        case "name":<span class="cov5" title="4">
+        case "name":<span class="cov3" title="4">
                 return v.Name</span>
-        case "edition":<span class="cov5" title="4">
+        case "edition":<span class="cov3" title="4">
                 return v.Edition</span>
-        case "publisher_id":<span class="cov5" title="4">
+        case "publisher_id":<span class="cov3" title="4">
                 return v.PublisherID</span>
-        case "notes":<span class="cov5" title="4">
+        case "notes":<span class="cov3" title="4">
                 return v.Notes</span>
-        case "tags":<span class="cov5" title="4">
+        case "tags":<span class="cov3" title="4">
                 return v.Tags</span>
         default:<span class="cov0" title="0">
                 return nil</span>
         }
 }
 
-func setFieldValue(v *GameSystemVersion, field string, value any) <span class="cov3" title="2">{
+func setFieldValue(v *GameSystemVersion, field string, value any) <span class="cov2" title="2">{
         switch field </span>{
         case "name":<span class="cov1" title="1">
                 v.Name = value.(string)</span>
@@ -1060,14 +1172,14 @@ func setFieldValue(v *GameSystemVersion, field string, value any) <span class="c
 
 var patchableFields = []string{"name", "edition", "publisher_id", "notes", "tags"}
 
-func changedFields(submitted, base *GameSystemVersion) []string <span class="cov3" title="2">{
+func changedFields(submitted, base *GameSystemVersion) []string <span class="cov2" title="2">{
         var changed []string
-        for _, field := range patchableFields </span><span class="cov7" title="10">{
+        for _, field := range patchableFields </span><span class="cov5" title="10">{
                 if !reflect.DeepEqual(fieldValue(submitted, field), fieldValue(base, field)) </span><span class="cov1" title="1">{
                         changed = append(changed, field)
                 }</span>
         }
-        <span class="cov3" title="2">sort.Strings(changed)
+        <span class="cov2" title="2">sort.Strings(changed)
         return changed</span>
 }
 
@@ -1283,6 +1395,7 @@ func SetCurrentVersion(c context.Context, id string, version int, actingUserID s
 
 import (
         "encoding/json"
+        "errors"
         "net/http"
         "strconv"
 
@@ -1303,17 +1416,17 @@ var systemEvents events.SystemPublisher
 // publishSystemChange loads the system's authoritative current version and emits one
 // gamesystems.events.system.&lt;action&gt; event. Fail-open: any problem loading the system is logged
 // and the mutation response is unaffected (the publisher itself is already fail-open).
-func publishSystemChange(c *gin.Context, action, systemID string) <span class="cov6" title="4">{
+func publishSystemChange(c *gin.Context, action, systemID string) <span class="cov5" title="4">{
         if systemEvents == nil </span><span class="cov0" title="0">{
                 return
         }</span>
-        <span class="cov6" title="4">cur, err := models.Get(c.Request.Context(), systemID)
+        <span class="cov5" title="4">cur, err := models.Get(c.Request.Context(), systemID)
         if err != nil || cur == nil </span><span class="cov0" title="0">{
                 logging.Logger.Warn("skipped system change event: current version unavailable",
                         "system_id", systemID, "action", action, "error", err)
                 return
         }</span>
-        <span class="cov6" title="4">data := map[string]any{"title": cur.Name}
+        <span class="cov5" title="4">data := map[string]any{"title": cur.Name}
         switch action </span>{
         case "created":<span class="cov3" title="2">
                 systemEvents.PublishSystemCreated(c.Request.Context(), systemID, cur.Version, data)</span>
@@ -1344,7 +1457,7 @@ type rejectVersionRequest struct {
         Note string `json:"note"`
 }
 
-func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov10" title="11">{
+func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov10" title="14">{
         logging.Logger.Info("Setting up game system endpoint handlers...")
 
         systemEvents = pub
@@ -1365,26 +1478,67 @@ func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub event
         g.POST("/systems/:id/versions/:version/current", reviewRoles, setCurrentGameSystemVersion)
 }</span>
 
-func listGameSystems(c *gin.Context) <span class="cov1" title="1">{
-        results, err := models.List(c.Request.Context())
-        if err != nil </span><span class="cov0" title="0">{
-                c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
-                return
-        }</span>
-        <span class="cov1" title="1">c.JSON(http.StatusOK, results)</span>
+// listSystemsResponse is the GET /systems envelope: a bounded page of systems plus the total
+// count matching the search. Clients that predate pagination also accept a bare array.
+type listSystemsResponse struct {
+        Systems []*models.GameSystemView `json:"systems"`
+        Total   int                      `json:"total"`
+        Page    int                      `json:"page"`
+        PerPage int                      `json:"per_page"`
 }
 
-func getGameSystem(c *gin.Context) <span class="cov7" title="5">{
+// parseListParams reads the GET /systems query string. A non-integer page or per_page is a
+// client error; out-of-range values are left for models.List to clamp.
+func parseListParams(c *gin.Context) (models.ListParams, error) <span class="cov8" title="8">{
+        params := models.ListParams{Search: c.Query("q"), Sort: c.Query("sort")}
+        if raw := c.Query("page"); raw != "" </span><span class="cov1" title="1">{
+                n, err := strconv.Atoi(raw)
+                if err != nil </span><span class="cov1" title="1">{
+                        return params, errors.New("page must be an integer")
+                }</span>
+                <span class="cov0" title="0">params.Page = n</span>
+        }
+        <span class="cov7" title="7">if raw := c.Query("per_page"); raw != "" </span><span class="cov3" title="2">{
+                n, err := strconv.Atoi(raw)
+                if err != nil </span><span class="cov1" title="1">{
+                        return params, errors.New("per_page must be an integer")
+                }</span>
+                <span class="cov1" title="1">params.PerPage = n</span>
+        }
+        <span class="cov7" title="6">return params, nil</span>
+}
+
+func listGameSystems(c *gin.Context) <span class="cov8" title="8">{
+        params, err := parseListParams(c)
+        if err != nil </span><span class="cov3" title="2">{
+                c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: err.Error()})
+                return
+        }</span>
+        <span class="cov7" title="6">result, err := models.List(c.Request.Context(), params)
+        if err != nil </span><span class="cov1" title="1">{
+                if errors.Is(err, models.ErrInvalidSort) </span><span class="cov1" title="1">{
+                        c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "sort must be one of name, -name, created, -created"})
+                        return
+                }</span>
+                <span class="cov0" title="0">c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
+                return</span>
+        }
+        <span class="cov6" title="5">c.JSON(http.StatusOK, listSystemsResponse{
+                Systems: result.Systems, Total: result.Total, Page: result.Page, PerPage: result.PerPage,
+        })</span>
+}
+
+func getGameSystem(c *gin.Context) <span class="cov6" title="5">{
         result, err := models.Get(c.Request.Context(), c.Param("id"))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov7" title="5">if result == nil </span><span class="cov1" title="1">{
+        <span class="cov6" title="5">if result == nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
-        <span class="cov6" title="4">c.JSON(http.StatusOK, result)</span>
+        <span class="cov5" title="4">c.JSON(http.StatusOK, result)</span>
 }
 
 type createGameSystemRequest struct {
@@ -1392,17 +1546,17 @@ type createGameSystemRequest struct {
         SystemID                 string `json:"system_id" binding:"required"`
 }
 
-func createGameSystem(c *gin.Context) <span class="cov6" title="4">{
+func createGameSystem(c *gin.Context) <span class="cov5" title="4">{
         var req createGameSystemRequest
         if err := c.ShouldBindJSON(&amp;req); err != nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: err.Error()})
                 return
         }</span>
-        <span class="cov5" title="3">if !models.ValidateSystemID(req.SystemID) </span><span class="cov0" title="0">{
+        <span class="cov4" title="3">if !models.ValidateSystemID(req.SystemID) </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "system_id must be a lowercase kebab-case slug"})
                 return
         }</span>
-        <span class="cov5" title="3">entity := req.GameSystemVersion
+        <span class="cov4" title="3">entity := req.GameSystemVersion
 
         id, err := models.Create(c.Request.Context(), &amp;entity, req.SystemID, authz.Viewer(c))
         if err != nil </span><span class="cov1" title="1">{
@@ -1427,7 +1581,7 @@ func createGameSystem(c *gin.Context) <span class="cov6" title="4">{
         c.JSON(http.StatusCreated, result)</span>
 }
 
-func patchGameSystem(c *gin.Context) <span class="cov5" title="3">{
+func patchGameSystem(c *gin.Context) <span class="cov4" title="3">{
         id := c.Param("id")
 
         var req map[string]json.RawMessage
@@ -1436,23 +1590,23 @@ func patchGameSystem(c *gin.Context) <span class="cov5" title="3">{
                 return
         }</span>
 
-        <span class="cov5" title="3">existing, err := models.Get(c.Request.Context(), id)
+        <span class="cov4" title="3">existing, err := models.Get(c.Request.Context(), id)
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov5" title="3">if existing == nil </span><span class="cov0" title="0">{
+        <span class="cov4" title="3">if existing == nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
 
-        <span class="cov5" title="3">updated := existing.GameSystemVersion
+        <span class="cov4" title="3">updated := existing.GameSystemVersion
         hasKnownField := false
-        for field, raw := range req </span><span class="cov5" title="3">{
+        for field, raw := range req </span><span class="cov4" title="3">{
                 if len(raw) == 0 || string(raw) == "null" </span><span class="cov0" title="0">{
                         continue</span>
                 }
-                <span class="cov5" title="3">switch field </span>{
+                <span class="cov4" title="3">switch field </span>{
                 case "name":<span class="cov3" title="2">
                         if err := json.Unmarshal(raw, &amp;updated.Name); err != nil </span><span class="cov0" title="0">{
                                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: field + ": " + err.Error()})
@@ -1481,30 +1635,30 @@ func patchGameSystem(c *gin.Context) <span class="cov5" title="3">{
                 default:<span class="cov0" title="0">
                         continue</span>
                 }
-                <span class="cov5" title="3">hasKnownField = true</span>
+                <span class="cov4" title="3">hasKnownField = true</span>
         }
-        <span class="cov5" title="3">if !hasKnownField </span><span class="cov0" title="0">{
+        <span class="cov4" title="3">if !hasKnownField </span><span class="cov0" title="0">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "no recognized fields to change"})
                 return
         }</span>
 
-        <span class="cov5" title="3">roles := authz.Roles(c)
+        <span class="cov4" title="3">roles := authz.Roles(c)
         state := models.VersionStateSubmitted
         if authz.HasRole(roles, authz.RoleAdmin) || authz.HasRole(roles, authz.RoleEditor) </span><span class="cov3" title="2">{
                 state = models.VersionStateLive
         }</span>
 
-        <span class="cov5" title="3">version, err := models.CreateVersion(c.Request.Context(), id, &amp;updated, state, authz.Viewer(c))
+        <span class="cov4" title="3">version, err := models.CreateVersion(c.Request.Context(), id, &amp;updated, state, authz.Viewer(c))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "update_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov5" title="3">if version == nil </span><span class="cov0" title="0">{
+        <span class="cov4" title="3">if version == nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
 
-        <span class="cov5" title="3">if state != models.VersionStateLive </span><span class="cov1" title="1">{
+        <span class="cov4" title="3">if state != models.VersionStateLive </span><span class="cov1" title="1">{
                 c.JSON(http.StatusAccepted, submittedVersionResponse{
                         Version: version.Version, State: string(version.State), Message: "Change submitted for review",
                 })
