@@ -69,7 +69,7 @@
 				
 				<option value="file6">github.com/sweetrpg/game-systems-api/models/stats.go (100.0%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (21.3%)</option>
+				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (20.1%)</option>
 				
 				<option value="file8">github.com/sweetrpg/game-systems-api/server/game_systems.go (41.0%)</option>
 				
@@ -871,16 +871,44 @@ func GetVersion(c context.Context, recordID string, version int) (*GameSystemVer
         <span class="cov0" title="0">return results[0], nil</span>
 }
 
+// getVersionByID fetches a version snapshot by its own document `_id`.
+func getVersionByID(c context.Context, id string) (*GameSystemVersion, error) <span class="cov0" title="0">{
+        results, err := database.Query[GameSystemVersion](versionCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
+                return nil, nil
+        }</span>
+        <span class="cov0" title="0">return results[0], nil</span>
+}
+
 // Get returns a game system's current version flattened with its stable record's audit block -
-// the view GET /systems/:id returns. id may be the document `_id` or the `system_id`.
+// the view GET /systems/:id returns. id may be the meta document `_id`, the `system_id` slug, or
+// a version document's own `_id` (the detail payload exposes that as its `id`, so a client that
+// round-trips it must resolve).
 func Get(c context.Context, id string) (*GameSystemView, error) <span class="cov0" title="0">{
         meta, err := GetMeta(c, id)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov0" title="0">if meta == nil </span><span class="cov0" title="0">{
-                return nil, nil
-        }</span>
+                // Not a meta _id or system_id - try it as a version document's own _id.
+                version, err := getVersionByID(c, id)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov0" title="0">if version == nil </span><span class="cov0" title="0">{
+                        return nil, nil
+                }</span>
+                <span class="cov0" title="0">meta, err = GetMeta(c, version.RecordID)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov0" title="0">if meta == nil </span><span class="cov0" title="0">{
+                        return nil, nil
+                }</span>
+        }
         <span class="cov0" title="0">version, err := GetVersion(c, meta.ID, meta.CurrentVersion)
         if err != nil || version == nil </span><span class="cov0" title="0">{
                 return nil, err
@@ -1457,7 +1485,7 @@ type rejectVersionRequest struct {
         Note string `json:"note"`
 }
 
-func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov10" title="14">{
+func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) <span class="cov10" title="15">{
         logging.Logger.Info("Setting up game system endpoint handlers...")
 
         systemEvents = pub
@@ -1489,7 +1517,7 @@ type listSystemsResponse struct {
 
 // parseListParams reads the GET /systems query string. A non-integer page or per_page is a
 // client error; out-of-range values are left for models.List to clamp.
-func parseListParams(c *gin.Context) (models.ListParams, error) <span class="cov8" title="8">{
+func parseListParams(c *gin.Context) (models.ListParams, error) <span class="cov7" title="8">{
         params := models.ListParams{Search: c.Query("q"), Sort: c.Query("sort")}
         if raw := c.Query("page"); raw != "" </span><span class="cov1" title="1">{
                 n, err := strconv.Atoi(raw)
@@ -1505,16 +1533,16 @@ func parseListParams(c *gin.Context) (models.ListParams, error) <span class="cov
                 }</span>
                 <span class="cov1" title="1">params.PerPage = n</span>
         }
-        <span class="cov7" title="6">return params, nil</span>
+        <span class="cov6" title="6">return params, nil</span>
 }
 
-func listGameSystems(c *gin.Context) <span class="cov8" title="8">{
+func listGameSystems(c *gin.Context) <span class="cov7" title="8">{
         params, err := parseListParams(c)
         if err != nil </span><span class="cov3" title="2">{
                 c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: err.Error()})
                 return
         }</span>
-        <span class="cov7" title="6">result, err := models.List(c.Request.Context(), params)
+        <span class="cov6" title="6">result, err := models.List(c.Request.Context(), params)
         if err != nil </span><span class="cov1" title="1">{
                 if errors.Is(err, models.ErrInvalidSort) </span><span class="cov1" title="1">{
                         c.JSON(http.StatusBadRequest, apiv.ErrorVO{Error: "invalid_request", Message: "sort must be one of name, -name, created, -created"})
@@ -1528,17 +1556,17 @@ func listGameSystems(c *gin.Context) <span class="cov8" title="8">{
         })</span>
 }
 
-func getGameSystem(c *gin.Context) <span class="cov6" title="5">{
+func getGameSystem(c *gin.Context) <span class="cov7" title="7">{
         result, err := models.Get(c.Request.Context(), c.Param("id"))
         if err != nil </span><span class="cov0" title="0">{
                 c.JSON(http.StatusInternalServerError, apiv.ErrorVO{Error: "query_failed", Message: err.Error()})
                 return
         }</span>
-        <span class="cov6" title="5">if result == nil </span><span class="cov1" title="1">{
+        <span class="cov7" title="7">if result == nil </span><span class="cov1" title="1">{
                 c.JSON(http.StatusNotFound, apiv.ErrorVO{})
                 return
         }</span>
-        <span class="cov5" title="4">c.JSON(http.StatusOK, result)</span>
+        <span class="cov6" title="6">c.JSON(http.StatusOK, result)</span>
 }
 
 type createGameSystemRequest struct {
