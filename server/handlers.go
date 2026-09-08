@@ -8,5 +8,6 @@ import (
 
 func SetupHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPublisher) {
 	setupGameSystemHandlers(g, authzClient, pub)
+	setupStatsHandlers(g)
 	setupStatusHandlers(g)
 }
