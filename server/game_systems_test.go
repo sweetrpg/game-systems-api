@@ -242,6 +242,22 @@ func TestGetGameSystemUnknownIdentifier(t *testing.T) {
 	}
 }
 
+// The detail payload exposes the current version document's own _id as "id"; GET /systems/:id
+// must resolve that back to the same system, not 404.
+func TestGetGameSystemByVersionDocumentID(t *testing.T) {
+	r, _ := setupTest(t) // seeds meta _id 64b000000000000000000001, version _id +"v1"
+
+	byRecord, recBody := getJSON(t, r, "/systems/64b000000000000000000001")
+	byVersion, verBody := getJSON(t, r, "/systems/64b000000000000000000001v1")
+
+	if byRecord.Code != http.StatusOK || byVersion.Code != http.StatusOK {
+		t.Fatalf("by record _id=%d, by version _id=%d (want 200/200)", byRecord.Code, byVersion.Code)
+	}
+	if recBody["id"] == nil || recBody["id"] != verBody["id"] || recBody["name"] != verBody["name"] {
+		t.Fatalf("version-id lookup returned a different system: record=%v version=%v", recBody, verBody)
+	}
+}
+
 func TestCreateGameSystemPublishesCreatedEvent(t *testing.T) {
 	r, pub := setupTest(t)
 
