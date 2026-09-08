@@ -14,6 +14,16 @@ for the full design and task breakdown.
 `catalog-api` resolves a `Volume`'s system references against this service over HTTP instead of
 storing its own copy - `game-systems-api` has no reverse dependency on `catalog-api`.
 
+## HTTP API notes
+
+`GET /systems` is search/sort/paginated at the query layer: `q` (case-insensitive name
+substring), `sort` (`name`/`-name`/`created`/`-created`), `page`, `per_page` (default 24, max
+100, clamped). It returns `{ systems, total, page, per_page }`. `models.List` runs this as one
+aggregation on `game_systems_versions` (`$match` state=live + optional regex, `$lookup`
+`game_systems_meta`, `$match` no `deleted_at`, `$facet` page + count) - the meta-side soft-delete
+filter is why it is a `$lookup` and not a version-only skip/limit. Off-allowlist `sort` yields
+`models.ErrInvalidSort`; the handler maps that and unparseable pagination to `400`.
+
 ## Committing Code
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):

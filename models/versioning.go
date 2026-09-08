@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -53,6 +54,13 @@ func EnsureIndexes(c context.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("game system: create record_id+state index: %w", err)
+	}
+	// Covers the List aggregation's leading stages: $match state=live then $sort by name.
+	_, err = database.Db.Collection(versionCollection).Indexes().CreateOne(c, mongo.IndexModel{
+		Keys: bson.D{{Key: "state", Value: 1}, {Key: "name", Value: 1}},
+	})
+	if err != nil {
+		return fmt.Errorf("game system: create state+name index: %w", err)
 	}
 	return nil
 }
@@ -111,36 +119,140 @@ func Get(c context.Context, id string) (*GameSystemView, error) {
 	return &GameSystemView{GameSystemVersion: *version, Auditable: meta.Auditable}, nil
 }
 
-// List returns every live game system's current version, each flattened with its record's audit
-// block. Soft-deleted systems (deleted_at set on their meta record) are excluded.
-func List(c context.Context) ([]*GameSystemView, error) {
-	metas, err := database.Query[EntityMeta](metaCollection, notDeletedMeta, nil, nil, 0, 0)
+// ListParams controls GET /systems: a case-insensitive name-substring search, a sort key drawn
+// from listSortKeys, and 1-based pagination. The zero value lists page 1 at the default sort and
+// page size.
+type ListParams struct {
+	Search  string
+	Sort    string
+	Page    int
+	PerPage int
+}
+
+// ListResult is one page of List output plus the total count of systems matching Search,
+// independent of the page window.
+type ListResult struct {
+	Systems []*GameSystemView
+	Total   int
+	Page    int
+	PerPage int
+}
+
+// ErrInvalidSort is returned by List when ListParams.Sort is not one of listSortKeys.
+var ErrInvalidSort = errors.New("game system: unsupported sort key")
+
+const (
+	listDefaultPerPage = 24
+	listMaxPerPage     = 100
+)
+
+// listSortKeys is the sort allowlist: it maps each accepted sort parameter to its aggregation
+// sort document, so the sort string can't inject an arbitrary field path. "created" orders on
+// the stable record's creation time, carried on the joined meta.
+var listSortKeys = map[string]bson.D{
+	"":         {{Key: "name", Value: 1}},
+	"name":     {{Key: "name", Value: 1}},
+	"-name":    {{Key: "name", Value: -1}},
+	"created":  {{Key: "meta.created_at", Value: 1}},
+	"-created": {{Key: "meta.created_at", Value: -1}},
+}
+
+// listRow decodes one $facet page element: the version document inline, plus its joined meta.
+type listRow struct {
+	GameSystemVersion `bson:",inline"`
+	Meta              EntityMeta `bson:"meta"`
+}
+
+// List returns one page of live game systems' current views - optionally filtered by a
+// case-insensitive name search, ordered by params.Sort - together with the total match count.
+// The search, sort, soft-delete exclusion, skip/limit, and count are all evaluated by a single
+// MongoDB aggregation on game_systems_versions. The meta-side soft-delete filter is why this is
+// a $lookup rather than a version-only skip/limit (design.md decision 1). An out-of-range Page
+// or PerPage is clamped, not rejected; an unknown Sort returns ErrInvalidSort.
+func List(c context.Context, params ListParams) (*ListResult, error) {
+	sortKey, ok := listSortKeys[params.Sort]
+	if !ok {
+		return nil, ErrInvalidSort
+	}
+
+	page := params.Page
+	if page < 1 {
+		page = 1
+	}
+	perPage := params.PerPage
+	switch {
+	case perPage < 1:
+		perPage = listDefaultPerPage
+	case perPage > listMaxPerPage:
+		perPage = listMaxPerPage
+	}
+
+	match := bson.D{{Key: "state", Value: string(VersionStateLive)}}
+	if params.Search != "" {
+		match = append(match, bson.E{Key: "name", Value: primitive.Regex{
+			Pattern: regexp.QuoteMeta(params.Search), Options: "i",
+		}})
+	}
+
+	// Stable order: the requested key, then _id as a tiebreaker so paging can't skip or repeat
+	// rows that share a sort value.
+	pageSort := make(bson.D, 0, len(sortKey)+1)
+	pageSort = append(pageSort, sortKey...)
+	pageSort = append(pageSort, bson.E{Key: "_id", Value: 1})
+
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$match", Value: match}},
+		bson.D{{Key: "$lookup", Value: bson.D{
+			{Key: "from", Value: metaCollection},
+			{Key: "localField", Value: "record_id"},
+			{Key: "foreignField", Value: "_id"},
+			{Key: "as", Value: "meta"},
+		}}},
+		bson.D{{Key: "$unwind", Value: "$meta"}},
+		bson.D{{Key: "$match", Value: bson.D{{Key: "meta.deleted_at", Value: nil}}}},
+		bson.D{{Key: "$facet", Value: bson.D{
+			{Key: "page", Value: bson.A{
+				bson.D{{Key: "$sort", Value: pageSort}},
+				bson.D{{Key: "$skip", Value: int64(page-1) * int64(perPage)}},
+				bson.D{{Key: "$limit", Value: int64(perPage)}},
+			}},
+			{Key: "total", Value: bson.A{
+				bson.D{{Key: "$count", Value: "n"}},
+			}},
+		}}},
+	}
+
+	cur, err := database.Db.Collection(versionCollection).Aggregate(c, pipeline)
 	if err != nil {
 		return nil, err
 	}
-	if len(metas) == 0 {
-		return []*GameSystemView{}, nil
+	defer func() { _ = cur.Close(c) }()
+
+	var facets []struct {
+		Page  []listRow `bson:"page"`
+		Total []struct {
+			N int `bson:"n"`
+		} `bson:"total"`
 	}
-	auditByRecordID := make(map[string]modelcore.Auditable, len(metas))
-	values := make(bson.A, len(metas))
-	for i, m := range metas {
-		auditByRecordID[m.ID] = m.Auditable
-		values[i] = m.ID
-	}
-	filter := bson.D{
-		{Key: "state", Value: string(VersionStateLive)},
-		{Key: "record_id", Value: bson.D{{Key: "$in", Value: values}}},
-	}
-	sortOrder := bson.D{{Key: "name", Value: 1}}
-	versions, err := database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
-	if err != nil {
+	if err := cur.All(c, &facets); err != nil {
 		return nil, err
 	}
-	views := make([]*GameSystemView, 0, len(versions))
-	for _, v := range versions {
-		views = append(views, &GameSystemView{GameSystemVersion: *v, Auditable: auditByRecordID[v.RecordID]})
+
+	result := &ListResult{Systems: []*GameSystemView{}, Page: page, PerPage: perPage}
+	if len(facets) == 0 {
+		return result, nil
 	}
-	return views, nil
+	if len(facets[0].Total) > 0 {
+		result.Total = facets[0].Total[0].N
+	}
+	for i := range facets[0].Page {
+		row := facets[0].Page[i]
+		result.Systems = append(result.Systems, &GameSystemView{
+			GameSystemVersion: row.GameSystemVersion,
+			Auditable:         row.Meta.Auditable,
+		})
+	}
+	return result, nil
 }
 
 // ListVersions returns every version of a game system, newest first.

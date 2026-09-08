@@ -331,3 +331,60 @@ func TestReadPathsPublishNoEvents(t *testing.T) {
 		t.Fatalf("reads must publish nothing, got %+v", calls)
 	}
 }
+
+// TestListGameSystemsEnvelope covers the response shape and that a no-param request still
+// returns page 1 at the default size (additive, not breaking, under the pre-1.0 rule).
+func TestListGameSystemsEnvelope(t *testing.T) {
+	r, _ := setupTest(t) // seeds one system, "Numenera"
+
+	w, body := getJSON(t, r, "/systems")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /systems: got %d want 200, body %s", w.Code, w.Body.String())
+	}
+	systems, ok := body["systems"].([]any)
+	if !ok || len(systems) != 1 {
+		t.Fatalf("systems = %v, want a 1-element array", body["systems"])
+	}
+	if body["total"] != float64(1) {
+		t.Errorf("total = %v, want 1", body["total"])
+	}
+	if body["page"] != float64(1) || body["per_page"] != float64(24) {
+		t.Errorf("page/per_page = %v/%v, want 1/24", body["page"], body["per_page"])
+	}
+}
+
+func TestListGameSystemsSearchParam(t *testing.T) {
+	r, _ := setupTest(t)
+
+	_, hit := getJSON(t, r, "/systems?q=nume")
+	if hit["total"] != float64(1) {
+		t.Errorf("q=nume total = %v, want 1", hit["total"])
+	}
+
+	w, miss := getJSON(t, r, "/systems?q=zzzznope")
+	if w.Code != http.StatusOK {
+		t.Fatalf("q=zzzznope: got %d want 200", w.Code)
+	}
+	if miss["total"] != float64(0) {
+		t.Errorf("q=zzzznope total = %v, want 0", miss["total"])
+	}
+	if s, ok := miss["systems"].([]any); !ok || len(s) != 0 {
+		t.Errorf("q=zzzznope systems = %v, want empty array", miss["systems"])
+	}
+}
+
+func TestListGameSystemsBadParamsAndClamp(t *testing.T) {
+	r, _ := setupTest(t)
+
+	for _, q := range []string{"/systems?page=abc", "/systems?per_page=xyz", "/systems?sort=bogus"} {
+		w, _ := getJSON(t, r, q)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("GET %s: got %d want 400", q, w.Code)
+		}
+	}
+
+	_, body := getJSON(t, r, "/systems?per_page=500")
+	if body["per_page"] != float64(100) {
+		t.Errorf("per_page=500 clamped to %v, want 100", body["per_page"])
+	}
+}
