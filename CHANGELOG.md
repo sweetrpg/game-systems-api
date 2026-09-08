@@ -1,4 +1,15 @@
 
+## 0.6.0 - 2026-09-08
+
+### <!-- 0 -->🚀 Features
+- Add GET /stats game-system count endpoint
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.5.1
+
+
+
 ## 0.5.1 - 2026-09-07
 
 ### <!-- 10 -->💼 Other
