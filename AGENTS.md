@@ -24,6 +24,18 @@ aggregation on `game_systems_versions` (`$match` state=live + optional regex, `$
 filter is why it is a `$lookup` and not a version-only skip/limit. Off-allowlist `sort` yields
 `models.ErrInvalidSort`; the handler maps that and unparseable pagination to `400`.
 
+## Rate limiting
+
+Per-client/IP rate limiting is the platform default via the shared `api-core.go/ratelimit`
+middleware (Redis-backed counters keyed by `X-API-Key` else client IP, `cheap` tier for
+`/status/*`, fail-closed 503, 429 on exceed). Tune with `RATE_LIMIT_CHEAP`/
+`RATE_LIMIT_CHEAP_WINDOW_SECONDS`/`RATE_LIMIT_STANDARD`/`RATE_LIMIT_STANDARD_WINDOW_SECONDS`.
+
+The middleware is registered only when a Redis pool is configured (`REDIS_HOST` set); until the
+`game-systems` namespace cache is provisioned in `support/infrastructure` it logs a startup WARN
+and runs without limiting. A follow-up makes it unconditional once `REDIS_*` lands in the dev
+overlay. See `platform`'s `openspec/changes/fix-rate-limiting-per-client-ip`.
+
 ## Committing Code
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):
