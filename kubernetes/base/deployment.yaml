@@ -41,6 +41,8 @@ spec:
                             name: api-env
                       - secretRef:
                             name: api-db
+                      - secretRef:
+                            name: api-cache
                   env:
                       - name: GOMEMLIMIT
                         value: "900MiB"
