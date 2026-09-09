@@ -35,14 +35,13 @@ func main() {
 	defer tracing.TeardownTracing()
 	r.Use(otelgin.Middleware(constants.ServiceName))
 
-	// Per-client/IP rate limiter (Redis-backed, fail-closed). Guarded until #106 provisions the
-	// game-systems namespace cache and REDIS_* lands in the overlay - a follow-up flips this to
-	// unconditional. See platform openspec/changes/fix-rate-limiting-per-client-ip.
-	if redisPool := apiutil.RedisPool(); redisPool != nil {
-		r.Use(ratelimit.Middleware(redisPool, ratelimit.DefaultOptions()))
-	} else {
-		logging.Logger.Warn("rate limiting DISABLED: no Redis pool configured; pending #106 game-systems cache")
+	// Per-client/IP rate limiter (Redis-backed, fail-closed). Registered unconditionally: a nil
+	// or unreachable pool makes limited requests return 503, never unlimited traffic.
+	redisPool := apiutil.RedisPool()
+	if redisPool == nil {
+		logging.Logger.Warn("REDIS_HOST is not configured; rate limiting will fail closed (503) on every limited request")
 	}
+	r.Use(ratelimit.Middleware(redisPool, ratelimit.DefaultOptions()))
 
 	database.SetupDatabase()
 	defer database.TeardownDatabase()
