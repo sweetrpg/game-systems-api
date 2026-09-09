@@ -7,11 +7,11 @@ resources:
     - ../../base
     - atlas-db-user.yaml
     - configmaps.yaml
-    - externalsecret-nats.yaml
     - ingress.yaml
     - middlewares.yaml
     - secrets/db.yaml
     - secrets/cache.yaml
+    - secrets/nats.yaml
 
 patches:
     - path: deployment-nats.yaml
