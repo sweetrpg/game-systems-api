@@ -1,4 +1,16 @@
 
+## 0.8.0 - 2026-09-09
+
+### <!-- 0 -->🚀 Features
+- Add per-client rate limiting via shared api-core middleware (#106)
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.7.1
+- Add per-client rate-limit tier env to dev overlay (#106)
+
+
+
 ## 0.7.1 - 2026-09-08
 
 ### <!-- 1 -->🐛 Bug Fixes
