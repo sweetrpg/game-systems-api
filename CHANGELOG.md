@@ -1,4 +1,15 @@
 
+## 0.9.0 - 2026-09-09
+
+### <!-- 0 -->🚀 Features
+- Wire game-systems namespace cache, drop the pool guard (#106)
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.8.0
+
+
+
 ## 0.8.0 - 2026-09-09
 
 ### <!-- 0 -->🚀 Features
