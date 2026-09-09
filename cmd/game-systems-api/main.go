@@ -8,7 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	sloggin "github.com/samber/slog-gin"
 	apiconstants "github.com/sweetrpg/api-core.go/constants"
+	"github.com/sweetrpg/api-core.go/ratelimit"
 	"github.com/sweetrpg/api-core.go/tracing"
+	apiutil "github.com/sweetrpg/api-core.go/util"
 	"github.com/sweetrpg/authz-client.go/authz"
 	"github.com/sweetrpg/common.go/logging"
 	"github.com/sweetrpg/common.go/util"
@@ -32,6 +34,15 @@ func main() {
 	tracing.SetupTracing(constants.ServiceName)
 	defer tracing.TeardownTracing()
 	r.Use(otelgin.Middleware(constants.ServiceName))
+
+	// Per-client/IP rate limiter (Redis-backed, fail-closed). Guarded until #106 provisions the
+	// game-systems namespace cache and REDIS_* lands in the overlay - a follow-up flips this to
+	// unconditional. See platform openspec/changes/fix-rate-limiting-per-client-ip.
+	if redisPool := apiutil.RedisPool(); redisPool != nil {
+		r.Use(ratelimit.Middleware(redisPool, ratelimit.DefaultOptions()))
+	} else {
+		logging.Logger.Warn("rate limiting DISABLED: no Redis pool configured; pending #106 game-systems cache")
+	}
 
 	database.SetupDatabase()
 	defer database.TeardownDatabase()
