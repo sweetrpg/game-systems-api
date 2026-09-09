@@ -10,6 +10,7 @@ resources:
     - ingress.yaml
     - middlewares.yaml
     - secrets/db.yaml
+    - secrets/cache.yaml
     - secrets/nats.yaml
 
 patches:
