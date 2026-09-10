@@ -99,6 +99,7 @@ func GetVersion(c context.Context, recordID string, version int) (*GameSystemVer
 	if len(results) == 0 {
 		return nil, nil
 	}
+	results[0].EnsureTags()
 	return results[0], nil
 }
 
@@ -111,6 +112,7 @@ func getVersionByID(c context.Context, id string) (*GameSystemVersion, error) {
 	if len(results) == 0 {
 		return nil, nil
 	}
+	results[0].EnsureTags()
 	return results[0], nil
 }
 
@@ -275,10 +277,12 @@ func List(c context.Context, params ListParams) (*ListResult, error) {
 	}
 	for i := range facets[0].Page {
 		row := facets[0].Page[i]
-		result.Systems = append(result.Systems, &GameSystemView{
+		view := &GameSystemView{
 			GameSystemVersion: row.GameSystemVersion,
 			Auditable:         row.Meta.Auditable,
-		})
+		}
+		view.EnsureTags()
+		result.Systems = append(result.Systems, view)
 	}
 	return result, nil
 }
@@ -287,7 +291,14 @@ func List(c context.Context, params ListParams) (*ListResult, error) {
 func ListVersions(c context.Context, id string) ([]*GameSystemVersion, error) {
 	filter := bson.D{{Key: "record_id", Value: id}}
 	sortOrder := bson.D{{Key: "version", Value: -1}}
-	return database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
+	results, err := database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range results {
+		v.EnsureTags()
+	}
+	return results, nil
 }
 
 func setVersionState(c context.Context, recordID string, version int, fields bson.D) error {
@@ -343,6 +354,7 @@ func Create(c context.Context, gs *GameSystemVersion, systemID string, createdBy
 	gs.BaseVersion = nil
 	gs.SubmittedBy = createdBy
 	gs.SubmittedAt = now
+	gs.EnsureTags()
 
 	if _, err := database.Insert[GameSystemVersion](versionCollection, *gs); err != nil {
 		return nil, err
@@ -378,6 +390,7 @@ func CreateVersion(c context.Context, id string, gs *GameSystemVersion, state Ve
 	gs.BaseVersion = &baseVersion
 	gs.SubmittedBy = submittedBy
 	gs.SubmittedAt = time.Now()
+	gs.EnsureTags()
 
 	if _, err := database.Insert[GameSystemVersion](versionCollection, *gs); err != nil {
 		return nil, err
