@@ -16,6 +16,15 @@ type GameSystemVersion struct {
 	VersionLifecycle `bson:",inline"`
 }
 
+// EnsureTags normalizes a nil Tags slice to an empty one. A nil Go slice marshals to JSON
+// `null`; strict clients (game-systems-web's typed deserializer) reject that and fail the whole
+// response. Call on every read and write path so tags is always `[]` on the wire.
+func (v *GameSystemVersion) EnsureTags() {
+	if v.Tags == nil {
+		v.Tags = []modelcore.Tag{}
+	}
+}
+
 // GameSystemView is the flattened current-view a caller gets from GET /systems(/:id): the
 // current version's fields plus the stable record's platform audit block (created/updated/deleted)
 // carried through from EntityMeta. The version's own submission/review trail (VersionLifecycle)
