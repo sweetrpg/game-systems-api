@@ -67,17 +67,19 @@
 				
 				<option value="file5">github.com/sweetrpg/game-systems-api/internal/events/publisher.go (17.4%)</option>
 				
-				<option value="file6">github.com/sweetrpg/game-systems-api/models/stats.go (100.0%)</option>
+				<option value="file6">github.com/sweetrpg/game-systems-api/models/game_system.go (100.0%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-systems-api/models/versioning.go (20.1%)</option>
+				<option value="file7">github.com/sweetrpg/game-systems-api/models/stats.go (100.0%)</option>
 				
-				<option value="file8">github.com/sweetrpg/game-systems-api/server/game_systems.go (41.0%)</option>
+				<option value="file8">github.com/sweetrpg/game-systems-api/models/versioning.go (20.1%)</option>
 				
-				<option value="file9">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
+				<option value="file9">github.com/sweetrpg/game-systems-api/server/game_systems.go (41.0%)</option>
 				
-				<option value="file10">github.com/sweetrpg/game-systems-api/server/stats.go (71.4%)</option>
+				<option value="file10">github.com/sweetrpg/game-systems-api/server/handlers.go (0.0%)</option>
 				
-				<option value="file11">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
+				<option value="file11">github.com/sweetrpg/game-systems-api/server/stats.go (71.4%)</option>
+				
+				<option value="file12">github.com/sweetrpg/game-systems-api/server/status.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -763,6 +765,43 @@ func buildPublish(e *Envelope) (subject string, body []byte, msgID string, err e
 		
 		<pre class="file" id="file6" style="display: none">package models
 
+import modelcore "github.com/sweetrpg/model-core.go/models"
+
+// GameSystemVersion is one full-snapshot version of a game system's substantive fields, plus
+// the shared submission/review audit trail (VersionLifecycle).
+type GameSystemVersion struct {
+        ID               string          `bson:"_id" json:"id"`
+        RecordID         string          `bson:"record_id" json:"record_id"`
+        Version          int             `bson:"version" json:"version"`
+        Name             string          `bson:"name" json:"name"`
+        Edition          string          `bson:"edition" json:"edition"`
+        PublisherID      string          `bson:"publisher_id,omitempty" json:"publisher_id,omitempty"`
+        Notes            string          `bson:"notes" json:"notes"`
+        Tags             []modelcore.Tag `bson:"tags" json:"tags"`
+        VersionLifecycle `bson:",inline"`
+}
+
+// EnsureTags normalizes a nil Tags slice to an empty one. A nil Go slice marshals to JSON
+// `null`; strict clients (game-systems-web's typed deserializer) reject that and fail the whole
+// response. Call on every read and write path so tags is always `[]` on the wire.
+func (v *GameSystemVersion) EnsureTags() <span class="cov10" title="71">{
+        if v.Tags == nil </span><span class="cov9" title="70">{
+                v.Tags = []modelcore.Tag{}
+        }</span>
+}
+
+// GameSystemView is the flattened current-view a caller gets from GET /systems(/:id): the
+// current version's fields plus the stable record's platform audit block (created/updated/deleted)
+// carried through from EntityMeta. The version's own submission/review trail (VersionLifecycle)
+// is distinct from and unaffected by these.
+type GameSystemView struct {
+        GameSystemVersion   `bson:",inline"`
+        modelcore.Auditable `bson:",inline"`
+}
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">package models
+
 import (
         "context"
 
@@ -777,7 +816,7 @@ func CountGameSystems(c context.Context) (int64, error) <span class="cov10" titl
 }</span>
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">package models
+		<pre class="file" id="file8" style="display: none">package models
 
 import (
         "context"
@@ -878,7 +917,8 @@ func GetVersion(c context.Context, recordID string, version int) (*GameSystemVer
         <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
                 return nil, nil
         }</span>
-        <span class="cov0" title="0">return results[0], nil</span>
+        <span class="cov0" title="0">results[0].EnsureTags()
+        return results[0], nil</span>
 }
 
 // getVersionByID fetches a version snapshot by its own document `_id`.
@@ -890,7 +930,8 @@ func getVersionByID(c context.Context, id string) (*GameSystemVersion, error) <s
         <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
                 return nil, nil
         }</span>
-        <span class="cov0" title="0">return results[0], nil</span>
+        <span class="cov0" title="0">results[0].EnsureTags()
+        return results[0], nil</span>
 }
 
 // Get returns a game system's current version flattened with its stable record's audit block -
@@ -1054,10 +1095,12 @@ func List(c context.Context, params ListParams) (*ListResult, error) <span class
         }</span>
         <span class="cov6" title="12">for i := range facets[0].Page </span><span class="cov10" title="69">{
                 row := facets[0].Page[i]
-                result.Systems = append(result.Systems, &amp;GameSystemView{
+                view := &amp;GameSystemView{
                         GameSystemVersion: row.GameSystemVersion,
                         Auditable:         row.Meta.Auditable,
-                })
+                }
+                view.EnsureTags()
+                result.Systems = append(result.Systems, view)
         }</span>
         <span class="cov6" title="12">return result, nil</span>
 }
@@ -1066,8 +1109,15 @@ func List(c context.Context, params ListParams) (*ListResult, error) <span class
 func ListVersions(c context.Context, id string) ([]*GameSystemVersion, error) <span class="cov0" title="0">{
         filter := bson.D{{Key: "record_id", Value: id}}
         sortOrder := bson.D{{Key: "version", Value: -1}}
-        return database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
-}</span>
+        results, err := database.Query[GameSystemVersion](versionCollection, filter, sortOrder, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">for _, v := range results </span><span class="cov0" title="0">{
+                v.EnsureTags()
+        }</span>
+        <span class="cov0" title="0">return results, nil</span>
+}
 
 func setVersionState(c context.Context, recordID string, version int, fields bson.D) error <span class="cov0" title="0">{
         filter := bson.D{{Key: "record_id", Value: recordID}, {Key: "version", Value: version}}
@@ -1122,6 +1172,7 @@ func Create(c context.Context, gs *GameSystemVersion, systemID string, createdBy
         gs.BaseVersion = nil
         gs.SubmittedBy = createdBy
         gs.SubmittedAt = now
+        gs.EnsureTags()
 
         if _, err := database.Insert[GameSystemVersion](versionCollection, *gs); err != nil </span><span class="cov0" title="0">{
                 return nil, err
@@ -1157,6 +1208,7 @@ func CreateVersion(c context.Context, id string, gs *GameSystemVersion, state Ve
         gs.BaseVersion = &amp;baseVersion
         gs.SubmittedBy = submittedBy
         gs.SubmittedAt = time.Now()
+        gs.EnsureTags()
 
         if _, err := database.Insert[GameSystemVersion](versionCollection, *gs); err != nil </span><span class="cov0" title="0">{
                 return nil, err
@@ -1429,7 +1481,7 @@ func SetCurrentVersion(c context.Context, id string, version int, actingUserID s
 }
 </pre>
 		
-		<pre class="file" id="file8" style="display: none">package server
+		<pre class="file" id="file9" style="display: none">package server
 
 import (
         "encoding/json"
@@ -1845,7 +1897,7 @@ func setCurrentGameSystemVersion(c *gin.Context) <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file9" style="display: none">package server
+		<pre class="file" id="file10" style="display: none">package server
 
 import (
         "github.com/gin-gonic/gin"
@@ -1860,7 +1912,7 @@ func SetupHandlers(g *gin.Engine, authzClient *authz.Client, pub events.SystemPu
 }</span>
 </pre>
 		
-		<pre class="file" id="file10" style="display: none">package server
+		<pre class="file" id="file11" style="display: none">package server
 
 import (
         "net/http"
@@ -1902,7 +1954,7 @@ func getGameSystemStats(c *gin.Context) <span class="cov10" title="3">{
 }
 </pre>
 		
-		<pre class="file" id="file11" style="display: none">package server
+		<pre class="file" id="file12" style="display: none">package server
 
 import (
         "net/http"
