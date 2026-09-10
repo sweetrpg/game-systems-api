@@ -1,4 +1,11 @@
 
+## 0.9.1 - 2026-09-10
+
+### <!-- 1 -->🐛 Bug Fixes
+- Encode tags as [] not null in game system responses
+
+
+
 ## 0.9.0 - 2026-09-09
 
 ### <!-- 0 -->🚀 Features
