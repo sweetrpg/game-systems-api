@@ -21,9 +21,9 @@ data:
   # (created_by/updated_by). Internal call, pinned to api-v1 per docs/deployment-conventions.md.
   USERS_API_URL: http://api-v1.sweetrpg-users.svc.cluster.local:8000
   # Per-client/IP rate limiting (platform rate-limiting capability, #106). api-core defaults.
-  RATE_LIMIT_CHEAP: "120"
+  RATE_LIMIT_CHEAP: "300"
   RATE_LIMIT_CHEAP_WINDOW_SECONDS: "60"
-  RATE_LIMIT_STANDARD: "30"
+  RATE_LIMIT_STANDARD: "120"
   RATE_LIMIT_STANDARD_WINDOW_SECONDS: "60"
   # Namespace cache Service (support/infrastructure game-systems/cache,
   # clusters/dev/game-systems/cache.yaml). Backs the api-core.go/ratelimit counters.
