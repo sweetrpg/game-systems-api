@@ -1,4 +1,20 @@
 
+## 0.10.0 - 2026-10-29
+
+### <!-- 0 -->🚀 Features
+- Add dev PodMonitor so Prometheus scrapes /metrics
+
+
+### <!-- 1 -->🐛 Bug Fixes
+- Update rate limit
+- Bump api-core.go to v0.4.0 and set explicit limits
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.9.1
+
+
+
 ## 0.9.1 - 2026-09-10
 
 ### <!-- 1 -->🐛 Bug Fixes
