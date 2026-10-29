@@ -13,7 +13,7 @@ require (
 	github.com/sweetrpg/model-core.go v0.1.0
 	github.com/sweetrpg/mongodb.go v0.0.193
 	github.com/testcontainers/testcontainers-go/modules/mongodb v0.44.0
-	go.mongodb.org/mongo-driver v1.17.9
+	go.mongodb.org/mongo-driver v1.17.10
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.71.0
 )
 
