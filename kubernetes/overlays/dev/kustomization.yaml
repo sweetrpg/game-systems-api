@@ -9,6 +9,7 @@ resources:
     - configmaps.yaml
     - ingress.yaml
     - middlewares.yaml
+    - pod-monitor.yaml
     - secrets/db.yaml
     - secrets/cache.yaml
     - secrets/nats.yaml
