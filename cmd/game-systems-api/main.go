@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/penglongli/gin-metrics/ginmetrics"
 	sloggin "github.com/samber/slog-gin"
 	apiconstants "github.com/sweetrpg/api-core.go/constants"
 	"github.com/sweetrpg/api-core.go/ratelimit"
@@ -35,6 +36,8 @@ func main() {
 	defer tracing.TeardownTracing()
 	r.Use(otelgin.Middleware(constants.ServiceName))
 
+	setupMetrics(r)
+
 	// Per-client/IP rate limiter (Redis-backed, fail-closed). Registered unconditionally: a nil
 	// or unreachable pool makes limited requests return 503, never unlimited traffic.
 	redisPool := apiutil.RedisPool()
@@ -62,4 +65,16 @@ func main() {
 	server.SetupHandlers(r, authzClient, systemPublisher)
 
 	_ = r.Run(util.GetEnv(apiconstants.BIND_ADDRESS, ":8000"))
+}
+
+// setupMetrics serves Prometheus metrics at /metrics on the application port, where the
+// PodMonitor scrapes it. It is registered before the rate limiter so scrapes are not limited.
+func setupMetrics(r *gin.Engine) {
+	logging.Logger.Info("Setting up metrics endpoint...")
+
+	m := ginmetrics.GetMonitor()
+	m.SetMetricPath("/metrics")
+	m.SetSlowTime(10)
+	m.SetDuration([]float64{0.1, 0.3, 1.2, 5, 10})
+	m.Use(r)
 }

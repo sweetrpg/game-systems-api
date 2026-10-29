@@ -1,4 +1,15 @@
 
+## 0.10.1 - 2026-10-29
+
+### <!-- 1 -->🐛 Bug Fixes
+- Serve Prometheus metrics at /metrics
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.10.0
+
+
+
 ## 0.10.0 - 2026-10-29
 
 ### <!-- 0 -->🚀 Features
