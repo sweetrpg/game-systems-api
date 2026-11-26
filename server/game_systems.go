@@ -33,12 +33,14 @@ func publishSystemChange(c *gin.Context, action, systemID string) {
 			"system_id", systemID, "action", action, "error", err)
 		return
 	}
+	// systemID is whatever the request used, which may be the slug; consumers key on the
+	// document _id.
 	data := map[string]any{"title": cur.Name}
 	switch action {
 	case "created":
-		systemEvents.PublishSystemCreated(c.Request.Context(), systemID, cur.Version, data)
+		systemEvents.PublishSystemCreated(c.Request.Context(), cur.RecordID, cur.Version, data)
 	case "updated":
-		systemEvents.PublishSystemUpdated(c.Request.Context(), systemID, cur.Version, data)
+		systemEvents.PublishSystemUpdated(c.Request.Context(), cur.RecordID, cur.Version, data)
 	}
 }
 
@@ -83,6 +85,8 @@ func setupGameSystemHandlers(g *gin.Engine, authzClient *authz.Client, pub event
 	g.POST("/systems/:id/versions/:version/accept", reviewRoles, acceptGameSystemVersion)
 	g.POST("/systems/:id/versions/:version/reject", reviewRoles, rejectGameSystemVersion)
 	g.POST("/systems/:id/versions/:version/current", reviewRoles, setCurrentGameSystemVersion)
+
+	setupDeletionHandlers(g, authzClient)
 }
 
 // listSystemsResponse is the GET /systems envelope: a bounded page of systems plus the total
