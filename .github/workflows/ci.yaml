@@ -10,4 +10,7 @@ permissions:
 jobs:
   ci:
     uses: sweetrpg/github-actions/.github/workflows/go-ci.yaml@master
+    with:
+      # GOFLAGS=-v lists each test in the log, so a package that ran nothing is visible.
+      test-env: '{"GOFLAGS": "-v"}'
     secrets: inherit

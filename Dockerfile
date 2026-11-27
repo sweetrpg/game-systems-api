@@ -1,6 +1,6 @@
 # This is a multi-stage Dockerfile and requires >= Docker 17.05
 # https://docs.docker.com/engine/userguide/eng-image/multistage-build/
-FROM golang:1.26.5 AS builder
+FROM golang:1.26.10 AS builder
 
 ENV GOPROXY=http://proxy.golang.org
 
@@ -15,7 +15,7 @@ COPY go.sum go.sum
 RUN go mod download && go mod verify
 
 ADD . .
-RUN CGO_ENABLED=0 GOOS=linux go build -v -o /bin/server cmd/game-systems-api/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -v -o /bin/server ./cmd/game-systems-api
 RUN CGO_ENABLED=0 GOOS=linux go build -v -o /bin/backfill-canonical-user-ids ./cmd/backfill-canonical-user-ids
 
 FROM alpine

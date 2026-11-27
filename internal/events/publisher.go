@@ -25,7 +25,7 @@ const (
 type SystemPublisher interface {
 	PublishSystemCreated(ctx context.Context, systemID string, revision int, data any)
 	PublishSystemUpdated(ctx context.Context, systemID string, revision int, data any)
-	PublishSystemDeleted(ctx context.Context, systemID string)
+	PublishSystemDeleted(ctx context.Context, systemID string, data any)
 }
 
 // Publisher publishes game-system change events to NATS JetStream.
@@ -51,7 +51,9 @@ func NewPublisher(ctx context.Context) (*Publisher, error) {
 		return nil, nil
 	}
 
-	opts := []nats.Option{}
+	// Keep trying: without these, a broker that is down at startup disables publishing until a
+	// restart, and the client gives up reconnecting after a long outage.
+	opts := []nats.Option{nats.RetryOnFailedConnect(true), nats.MaxReconnects(-1)}
 	if creds := os.Getenv("NATS_CREDS"); creds != "" {
 		opts = append(opts, nats.UserCredentials(creds))
 	} else if user := os.Getenv("NATS_USER"); user != "" {
@@ -95,8 +97,8 @@ func (p *Publisher) PublishSystemUpdated(ctx context.Context, systemID string, r
 	p.publish(ctx, systemID, "updated", revision, data)
 }
 
-func (p *Publisher) PublishSystemDeleted(ctx context.Context, systemID string) {
-	p.publish(ctx, systemID, "deleted", 0, nil)
+func (p *Publisher) PublishSystemDeleted(ctx context.Context, systemID string, data any) {
+	p.publish(ctx, systemID, "deleted", 0, data)
 }
 
 func (p *Publisher) publish(ctx context.Context, systemID, action string, revision int, data any) {

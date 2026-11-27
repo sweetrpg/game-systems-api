@@ -193,6 +193,20 @@ type listRow struct {
 	Meta              EntityMeta `bson:"meta"`
 }
 
+// clampPage forces a 1-based page and a page size within the allowed range.
+func clampPage(page, perPage int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	switch {
+	case perPage < 1:
+		perPage = listDefaultPerPage
+	case perPage > listMaxPerPage:
+		perPage = listMaxPerPage
+	}
+	return page, perPage
+}
+
 // List returns one page of live game systems' current views - optionally filtered by a
 // case-insensitive name search, ordered by params.Sort - together with the total match count.
 // The search, sort, soft-delete exclusion, skip/limit, and count are all evaluated by a single
@@ -205,17 +219,7 @@ func List(c context.Context, params ListParams) (*ListResult, error) {
 		return nil, ErrInvalidSort
 	}
 
-	page := params.Page
-	if page < 1 {
-		page = 1
-	}
-	perPage := params.PerPage
-	switch {
-	case perPage < 1:
-		perPage = listDefaultPerPage
-	case perPage > listMaxPerPage:
-		perPage = listMaxPerPage
-	}
+	page, perPage := clampPage(params.Page, params.PerPage)
 
 	match := bson.D{{Key: "state", Value: string(VersionStateLive)}}
 	if params.Search != "" {
