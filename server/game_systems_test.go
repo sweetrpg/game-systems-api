@@ -28,6 +28,7 @@ type recordedEvent struct {
 	systemID string
 	revision int
 	title    string
+	slug     string
 }
 
 // fakePublisher records publish calls instead of talking to NATS.
@@ -37,13 +38,14 @@ type fakePublisher struct {
 }
 
 func (f *fakePublisher) record(action, id string, rev int, data any) {
-	title := ""
+	title, slug := "", ""
 	if m, ok := data.(map[string]any); ok {
 		title, _ = m["title"].(string)
+		slug, _ = m["system_id"].(string)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.events = append(f.events, recordedEvent{action, id, rev, title})
+	f.events = append(f.events, recordedEvent{action, id, rev, title, slug})
 }
 
 func (f *fakePublisher) PublishSystemCreated(_ context.Context, id string, rev int, data any) {
@@ -52,8 +54,8 @@ func (f *fakePublisher) PublishSystemCreated(_ context.Context, id string, rev i
 func (f *fakePublisher) PublishSystemUpdated(_ context.Context, id string, rev int, data any) {
 	f.record("updated", id, rev, data)
 }
-func (f *fakePublisher) PublishSystemDeleted(_ context.Context, id string) {
-	f.record("deleted", id, 0, nil)
+func (f *fakePublisher) PublishSystemDeleted(_ context.Context, id string, data any) {
+	f.record("deleted", id, 0, data)
 }
 
 func (f *fakePublisher) calls() []recordedEvent {
@@ -77,7 +79,7 @@ func setupTestAs(t *testing.T, roles []string) (*gin.Engine, *fakePublisher) {
 	logging.Init()
 
 	ctx := context.Background()
-	container, err := mongodb.Run(ctx, "mongo:7")
+	container, err := mongodb.Run(ctx, "mongo:8.0")
 	if err != nil {
 		t.Fatalf("start mongo container: %v", err)
 	}

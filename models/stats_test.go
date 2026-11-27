@@ -17,7 +17,7 @@ import (
 func setupCountTestDB(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	container, err := mongodb.Run(ctx, "mongo:7")
+	container, err := mongodb.Run(ctx, "mongo:8.0")
 	if err != nil {
 		t.Fatalf("start mongo container: %v", err)
 	}
