@@ -43,6 +43,19 @@ Response:
 A non-integer `page`/`per_page` or an off-allowlist `sort` returns `400`. With no params the
 endpoint returns the first page under the default sort and size.
 
+`DELETE /systems/:id` (document ID or `system_id`, `admin` role only) soft deletes a system and
+publishes `gamesystems.events.system.deleted`. It returns `204`, or `404` for an unknown or
+already deleted system. Versions are kept, the `system_id` stays reserved, and every read hides
+the system.
+
+`GET /deleted-systems` (unauthenticated; `page`, `per_page`) returns `id`, `system_id`, and
+`deleted_at` for each deleted system, oldest first. Services that hold references reconcile
+against it, because event publishing is fail-open.
+
+## Tests
+
+The database tests start their own MongoDB 8.0 containers, so they need Docker.
+
 ## Documentation
 
 Package documentation: [pkg.go.dev/github.com/sweetrpg/game-systems-api](https://pkg.go.dev/github.com/sweetrpg/game-systems-api).

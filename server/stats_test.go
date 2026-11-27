@@ -26,7 +26,7 @@ func setupStatsTest(t *testing.T) *gin.Engine {
 	logging.Init()
 
 	ctx := context.Background()
-	container, err := mongodb.Run(ctx, "mongo:7")
+	container, err := mongodb.Run(ctx, "mongo:8.0")
 	if err != nil {
 		t.Fatalf("start mongo container: %v", err)
 	}

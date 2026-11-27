@@ -15,7 +15,7 @@ func TestPublisherNoopWhenUnconnected(t *testing.T) {
 	var nilPub *Publisher
 	nilPub.PublishSystemCreated(ctx, "sys1", 1, nil)
 	nilPub.PublishSystemUpdated(ctx, "sys1", 2, map[string]any{"title": "x"})
-	nilPub.PublishSystemDeleted(ctx, "sys1")
+	nilPub.PublishSystemDeleted(ctx, "sys1", nil)
 
 	empty := &Publisher{}
 	empty.PublishSystemUpdated(ctx, "sys1", 3, nil)
