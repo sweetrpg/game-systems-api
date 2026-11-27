@@ -1,4 +1,25 @@
 
+## 0.11.0 - 2026-11-27
+
+### <!-- 0 -->🚀 Features
+- Add admin-only soft delete for game systems
+
+
+### <!-- 1 -->🐛 Bug Fixes
+- Set ndots 2 on API pods
+- Build the game-systems-api package
+
+
+### <!-- 3 -->📚 Documentation
+- Add the feature work checkpoint pointer
+
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+- Merge master into develop after v0.10.1
+- Update Go to 1.26.10
+
+
+
 ## 0.10.1 - 2026-10-29
 
 ### <!-- 1 -->🐛 Bug Fixes
